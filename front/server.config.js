@@ -27,7 +27,7 @@ module.exports = {
   // API 配置（如果需要在构建时使用）
   api: {
     // 后端 API 地址，需与 application.yaml 的 server.port 一致
-    baseUrl: 'http://localhost:9527',
+    baseUrl: 'http://localhost:9529',
   },
 
   // 其他自定义配置
