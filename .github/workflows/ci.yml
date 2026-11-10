@@ -146,8 +146,12 @@ jobs:
             --data '{"msgtype":"text","text":{"content":"CI readiness check"}}' \
             'http://127.0.0.1:45123/cgi-bin/webhook/send?key=local-test'
 
+      # This wrapper loads gradle.properties after command-line system properties.
+      # Remove workstation proxy entries in the disposable checkout before its first download.
+      - name: Remove workstation proxy from CI checkout
+        run: sed -i -E '/^systemProp\.(http|https)\.proxy(Host|Port)=/d' gradle.properties
+
       - name: Test and package application
-        # Override the workstation-only proxy in gradle.properties, including for wrapper downloads.
         run: >-
           bash ./gradlew --no-daemon --console=plain
           -Dhttp.proxyHost= -Dhttps.proxyHost=

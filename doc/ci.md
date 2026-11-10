@@ -13,7 +13,7 @@
 
 pnpm 版本通过 `front/package.json` 的 `packageManager` 固定，安装使用 `--frozen-lockfile`，防止 CI 自动更新依赖。流水线缓存 pnpm store 和 Gradle 依赖；Pull Request 的 Gradle 缓存只读。
 
-`gradle.properties` 中的代理只适用于本地工作站。CI 命令通过 `-Dhttp.proxyHost= -Dhttps.proxyHost=` 清除这两个代理主机设置，不修改本地配置。Linux 使用 `bash ./gradlew`，不依赖仓库中的可执行权限标记。
+`gradle.properties` 中的代理只适用于本地工作站。Gradle Wrapper 会在命令行参数之后读取该文件，因此 CI 先在 Runner 的临时检出目录中移除 HTTP/HTTPS 代理主机和端口配置，再执行 Wrapper；不会修改开发者工作区。Linux 使用 `bash ./gradlew`，不依赖仓库中的可执行权限标记。
 
 ## ESLint 的现有问题
 
