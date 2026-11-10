@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { createSSEWithBackoff } from '@/lib/sse'
-import { BiSearch, BiSave, BiTargetLock, BiMap, BiMoney, BiTime, BiBookmark, BiBarChart, BiPlay, BiStop, BiLogOut, BiBriefcase } from 'react-icons/bi'
+import { BiSearch, BiSave, BiTargetLock, BiMap, BiMoney, BiTime, BiBookmark, BiBarChart, BiLogOut, BiBriefcase } from 'react-icons/bi'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -11,6 +11,8 @@ import { Select } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import AnalysisContent from '@/app/liepin/analysis/AnalysisContent'
 import PageHeader from '@/app/components/PageHeader'
+import DeliveryProgressPanel, { DeliveryTaskButton } from '@/app/components/DeliveryProgressPanel'
+import { useDeliveryProgress } from '@/lib/useDeliveryProgress'
 import { API_BASE } from '@/lib/api'
 
 interface LiepinConfig {
@@ -45,7 +47,7 @@ export default function LiepinPage() {
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null)
   const [isCustomCity, setIsCustomCity] = useState(false) // 是否手动输入城市
   const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const [isDelivering, setIsDelivering] = useState(false)
+  const deliveryTask = useDeliveryProgress('liepin')
   const [checkingLogin, setCheckingLogin] = useState(true)
   const [showLogoutDialog, setShowLogoutDialog] = useState(false)
   const [showLogoutResultDialog, setShowLogoutResultDialog] = useState(false)
@@ -194,47 +196,7 @@ export default function LiepinPage() {
     }
   }
 
-  const handleStartDelivery = async () => {
-    try {
-      setIsDelivering(true)
-      const response = await fetch(`${API_BASE}/api/liepin/start`, {
-        method: 'POST',
-      })
-      const data = await response.json()
 
-      if (data.success) {
-        // 启动成功：不弹框
-      } else {
-        // 启动失败：不弹框
-        console.warn('启动失败：', data.message)
-        setIsDelivering(false)
-      }
-    } catch (error) {
-      console.error('Failed to start delivery:', error)
-      // 启动失败：不弹框
-      setIsDelivering(false)
-    }
-  }
-
-  const handleStopDelivery = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/api/liepin/stop`, {
-        method: 'POST',
-      })
-      const data = await response.json()
-
-      if (data.success) {
-        // 停止成功：不弹框
-        setIsDelivering(false)
-      } else {
-        // 停止失败：不弹框
-        console.warn('停止失败：', data.message)
-      }
-    } catch (error) {
-      console.error('Failed to stop delivery:', error)
-      // 停止失败：不弹框
-    }
-  }
 
   const triggerLogout = async () => {
     try {
@@ -242,7 +204,7 @@ export default function LiepinPage() {
       const data = await response.json()
       if (data.success) {
         setIsLoggedIn(false)
-        setIsDelivering(false)
+        void deliveryTask.refresh()
         console.info('已退出登录，数据库Cookie已置空')
         setLogoutResult({ success: true, message: '已退出登录，Cookie已清空。' })
         setShowLogoutResultDialog(true)
@@ -272,23 +234,7 @@ export default function LiepinPage() {
         accentBgClass="bg-purple-500"
         actions={
           <div className="flex items-center gap-2">
-            {checkingLogin ? (
-              <Button size="sm" disabled className="rounded-full bg-gray-300 text-gray-600 cursor-not-allowed px-4 shadow">
-                <BiPlay className="mr-1" /> 检查登录中...
-              </Button>
-            ) : !isLoggedIn ? (
-              <Button size="sm" disabled className="rounded-full bg-gray-300 text-gray-600 cursor-not-allowed px-4 shadow">
-                <BiPlay className="mr-1" /> 请先登录猎聘
-              </Button>
-            ) : isDelivering ? (
-              <Button onClick={handleStopDelivery} size="sm" className="rounded-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white px-4 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
-                <BiStop className="mr-1" /> 停止投递
-              </Button>
-            ) : (
-              <Button onClick={handleStartDelivery} size="sm" className="rounded-full bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-600 hover:to-green-600 text-white px-4 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
-                <BiPlay className="mr-1" /> 开始投递
-              </Button>
-            )}
+            <DeliveryTaskButton task={deliveryTask} loggedIn={isLoggedIn} />
             <Button onClick={() => setShowLogoutDialog(true)} size="sm" className="rounded-full bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white px-4 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
               <BiLogOut className="mr-1" /> 退出登录
             </Button>
@@ -298,6 +244,8 @@ export default function LiepinPage() {
           </div>
         }
       />
+
+      <DeliveryProgressPanel task={deliveryTask} />
 
       <Tabs defaultValue="config" className="w-full">
         <TabsList className="grid w-full grid-cols-2">

@@ -9,6 +9,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import PageHeader from '@/app/components/PageHeader'
+import DeliveryProgressPanel, { DeliveryTaskButton } from '@/app/components/DeliveryProgressPanel'
+import { useDeliveryProgress } from '@/lib/useDeliveryProgress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import AnalysisContent from '@/app/51job/analysis/AnalysisContent'
 import { API_BASE } from '@/lib/api'
@@ -29,7 +31,7 @@ const MAX_SALARY_SELECTIONS = 5
 export default function Job51Page() {
   const API = process.env.API_BASE_URL || `${API_BASE}`
   const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const [isDelivering, setIsDelivering] = useState(false)
+  const deliveryTask = useDeliveryProgress('51job')
   const [checkingLogin, setCheckingLogin] = useState(true)
   const [showLogoutDialog, setShowLogoutDialog] = useState(false)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
@@ -272,49 +274,7 @@ export default function Job51Page() {
     })()
   }, [])
 
-  const handleStartDelivery = async () => {
-    try {
-      setIsDelivering(true)
-      const response = await fetch(`${API}/api/51job/start`, { method: 'POST' })
-      const data = await response.json()
-      if (!data.success) {
-        console.warn('[51job] 启动失败：', data.message)
-        setIsDelivering(false)
-      }
-    } catch (error) {
-      console.error('[51job] 启动投递失败：', error)
-      setIsDelivering(false)
-    }
-  }
 
-  const handleStopDelivery = async () => {
-    try {
-      const response = await fetch(`${API}/api/51job/stop`, { method: 'POST' })
-      if (!response.ok) {
-        // 后端返回错误状态码，恢复按钮
-        console.warn('[51job] 停止投递请求失败，状态码:', response.status)
-        setIsDelivering(false)
-        return
-      }
-      
-      const data = await response.json()
-      console.log('[51job] 停止投递响应:', data)
-      
-      // 根据后端返回结果切换按钮状态
-      if (data.success) {
-        // 停止成功，恢复按钮
-        setIsDelivering(false)
-      } else {
-        // 停止失败（可能任务未运行），也恢复按钮
-        console.warn('[51job] 停止投递失败:', data.message)
-        setIsDelivering(false)
-      }
-    } catch (error) {
-      // 网络异常或后端未启动，恢复按钮状态
-      console.error('[51job] 停止投递请求异常:', error)
-      setIsDelivering(false)
-    }
-  }
 
   const triggerLogout = async () => {
     try {
@@ -406,23 +366,7 @@ export default function Job51Page() {
         accentBgClass="bg-blue-500"
         actions={
           <div className="flex items-center gap-2">
-            {checkingLogin ? (
-              <Button size="sm" disabled className="rounded-full bg-gray-300 text-gray-600 cursor-not-allowed px-4 shadow">
-                <BiPlay className="mr-1" /> 检查登录中...
-              </Button>
-            ) : !isLoggedIn ? (
-              <Button size="sm" disabled className="rounded-full bg-gray-300 text-gray-600 cursor-not-allowed px-4 shadow">
-                <BiPlay className="mr-1" /> 请先登录51job
-              </Button>
-            ) : isDelivering ? (
-              <Button onClick={handleStopDelivery} size="sm" className="rounded-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white px-4 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
-                <BiStop className="mr-1" /> 停止投递
-              </Button>
-            ) : (
-              <Button onClick={handleStartDelivery} size="sm" className="rounded-full bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-600 hover:to-green-600 text-white px-4 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
-                <BiPlay className="mr-1" /> 开始投递
-              </Button>
-            )}
+            <DeliveryTaskButton task={deliveryTask} loggedIn={isLoggedIn} />
             <Button onClick={() => setShowLogoutDialog(true)} size="sm" className="rounded-full bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white px-4 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
               <BiLogOut className="mr-1" /> 退出登录
             </Button>
@@ -432,6 +376,8 @@ export default function Job51Page() {
           </div>
         }
       />
+
+      <DeliveryProgressPanel task={deliveryTask} />
 
       <Tabs defaultValue="config" className="w-full">
         <TabsList className="grid w-full grid-cols-2">

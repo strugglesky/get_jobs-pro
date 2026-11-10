@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import Image from 'next/image'
 import { createSSEWithBackoff } from '@/lib/sse'
 import { createPortal } from 'react-dom'
-import { BiBriefcase, BiSave, BiSearch, BiMap, BiMoney, BiBuilding, BiTime, BiBarChart, BiTrash, BiPlus, BiPlay, BiStop, BiLogOut, BiImage, BiUpload, BiZoomIn, BiX } from 'react-icons/bi'
+import { BiBriefcase, BiSave, BiSearch, BiMap, BiMoney, BiBuilding, BiTime, BiBarChart, BiTrash, BiPlus, BiLogOut, BiImage, BiUpload, BiZoomIn, BiX } from 'react-icons/bi'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -12,6 +12,8 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import PageHeader from '@/app/components/PageHeader'
+import DeliveryProgressPanel, { DeliveryTaskButton } from '@/app/components/DeliveryProgressPanel'
+import { useDeliveryProgress } from '@/lib/useDeliveryProgress'
 import AnalysisContent from '@/app/boss/analysis/AnalysisContent'
 import { API_BASE } from '@/lib/api'
 
@@ -112,7 +114,7 @@ export default function BossPage() {
   const [blacklistType, setBlacklistType] = useState('company') // 默认为公司
   const [loading, setLoading] = useState(true)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const [isDelivering, setIsDelivering] = useState(false)
+  const deliveryTask = useDeliveryProgress('boss')
   const [checkingLogin, setCheckingLogin] = useState(true)
   const [showLogoutDialog, setShowLogoutDialog] = useState(false)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
@@ -580,58 +582,7 @@ export default function BossPage() {
     }
   }
 
-  const handleStartDelivery = async () => {
-    try {
-      setIsDelivering(true)
-      const response = await fetch(`${API_BASE}/api/boss/start`, {
-        method: 'POST',
-      })
-      const data = await response.json()
 
-      if (data.success) {
-        // 启动成功：不弹框，进度通过 SSE 推送
-      } else {
-        // 启动失败必须让用户看见。
-        // 之前这里只写 console.warn，后端返回"请先登录"或"任务已在运行中"时，
-        // 界面上一点反应都没有，看着就像按钮坏了。
-        console.warn('启动失败：', data.message)
-        setSaveResult({ success: false, title: '启动失败', message: data.message || '启动投递失败，请查看后端日志' })
-        setShowSaveDialog(true)
-        setIsDelivering(false)
-      }
-    } catch (error) {
-      console.error('Failed to start delivery:', error)
-      setSaveResult({
-        success: false,
-        title: '启动失败',
-        message: `无法连接后端服务（${API_BASE}），请确认服务已启动`,
-      })
-      setShowSaveDialog(true)
-      setIsDelivering(false)
-    }
-  }
-
-  const handleStopDelivery = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/api/boss/stop`, {
-        method: 'POST',
-      })
-      const data = await response.json()
-
-      if (data.success) {
-        // 停止成功：不弹框
-        setIsDelivering(false)
-      } else {
-        // 停止失败：也要将状态设置为未投递（因为可能任务已经结束）
-        console.warn('停止失败：', data.message)
-        setIsDelivering(false)
-      }
-    } catch (error) {
-      console.error('Failed to stop delivery:', error)
-      // 停止失败：也要将状态设置为未投递
-      setIsDelivering(false)
-    }
-  }
 
   const triggerLogout = async () => {
     try {
@@ -639,7 +590,7 @@ export default function BossPage() {
       const data = await response.json()
       if (data.success) {
         setIsLoggedIn(false)
-        setIsDelivering(false)
+        void deliveryTask.refresh()
         console.info('已退出登录，数据库Cookie已置空')
         setLogoutResult({ success: true, message: '已退出登录，Cookie已清空。' })
         setShowLogoutResultDialog(true)
@@ -669,23 +620,7 @@ export default function BossPage() {
         accentBgClass="bg-teal-500"
         actions={
           <div className="flex items-center gap-2">
-            {checkingLogin ? (
-              <Button size="sm" disabled className="rounded-full bg-gray-300 text-gray-600 cursor-not-allowed px-4 shadow">
-                <BiPlay className="mr-1" /> 检查登录中...
-              </Button>
-            ) : !isLoggedIn ? (
-              <Button size="sm" disabled className="rounded-full bg-gray-300 text-gray-600 cursor-not-allowed px-4 shadow">
-                <BiPlay className="mr-1" /> 请先登录Boss
-              </Button>
-            ) : isDelivering ? (
-              <Button onClick={handleStopDelivery} size="sm" className="rounded-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white px-4 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
-                <BiStop className="mr-1" /> 停止投递
-              </Button>
-            ) : (
-              <Button onClick={handleStartDelivery} size="sm" className="rounded-full bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-600 hover:to-green-600 text-white px-4 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
-                <BiPlay className="mr-1" /> 开始投递
-              </Button>
-            )}
+            <DeliveryTaskButton task={deliveryTask} loggedIn={isLoggedIn} />
             <Button onClick={() => setShowLogoutDialog(true)} size="sm" className="rounded-full bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white px-4 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
               <BiLogOut className="mr-1" /> 退出登录
             </Button>
@@ -695,6 +630,8 @@ export default function BossPage() {
           </div>
         }
       />
+
+      <DeliveryProgressPanel task={deliveryTask} />
 
       <Tabs defaultValue="config" className="w-full">
         <TabsList className="grid w-full grid-cols-2">

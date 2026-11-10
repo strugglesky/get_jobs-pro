@@ -11,6 +11,8 @@ import { Select } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import AnalysisContent from '@/app/zhilian/analysis/AnalysisContent'
 import PageHeader from '@/app/components/PageHeader'
+import DeliveryProgressPanel, { DeliveryTaskButton } from '@/app/components/DeliveryProgressPanel'
+import { useDeliveryProgress } from '@/lib/useDeliveryProgress'
 import { API_BASE } from '@/lib/api'
 
 interface ZhilianConfig {
@@ -25,7 +27,7 @@ interface ZhilianOptions { city: Option[] }
 
 export default function ZhilianPage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const [isDelivering, setIsDelivering] = useState(false)
+  const deliveryTask = useDeliveryProgress('zhilian')
   const [checkingLogin, setCheckingLogin] = useState(true)
   const [showLogoutDialog, setShowLogoutDialog] = useState(false)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
@@ -154,24 +156,7 @@ export default function ZhilianPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const handleStartDelivery = async () => {
-    try {
-      setIsDelivering(true)
-      const response = await fetch(`${API_BASE}/api/zhilian/start`, { method: 'POST' })
-      const data = await response.json()
-      if (!data.success) setIsDelivering(false)
-    } catch (error) {
-      setIsDelivering(false)
-    }
-  }
 
-  const handleStopDelivery = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/api/zhilian/stop`, { method: 'POST' })
-      const data = await response.json()
-      if (data.success) setIsDelivering(false)
-    } catch (error) {}
-  }
 
   const triggerLogout = async () => {
     try {
@@ -231,23 +216,7 @@ export default function ZhilianPage() {
         accentBgClass="bg-purple-500"
         actions={
           <div className="flex items-center gap-2">
-            {checkingLogin ? (
-              <Button size="sm" disabled className="rounded-full bg-gray-300 text-gray-600 cursor-not-allowed px-4 shadow">
-                <BiPlay className="mr-1" /> 检查登录中...
-              </Button>
-            ) : !isLoggedIn ? (
-              <Button size="sm" disabled className="rounded-full bg-gray-300 text-gray-600 cursor-not-allowed px-4 shadow">
-                <BiPlay className="mr-1" /> 请先登录智联招聘
-              </Button>
-            ) : isDelivering ? (
-              <Button onClick={handleStopDelivery} size="sm" className="rounded-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white px-4 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
-                <BiStop className="mr-1" /> 停止投递
-              </Button>
-            ) : (
-              <Button onClick={handleStartDelivery} size="sm" className="rounded-full bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-600 hover:to-green-600 text-white px-4 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
-                <BiPlay className="mr-1" /> 开始投递
-              </Button>
-            )}
+            <DeliveryTaskButton task={deliveryTask} loggedIn={isLoggedIn} />
             <Button onClick={() => setShowLogoutDialog(true)} size="sm" className="rounded-full bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white px-4 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
               <BiLogOut className="mr-1" /> 退出登录
             </Button>
@@ -257,6 +226,8 @@ export default function ZhilianPage() {
           </div>
         }
       />
+
+      <DeliveryProgressPanel task={deliveryTask} />
 
       <Tabs defaultValue="config" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
