@@ -1,0 +1,10 @@
+version: 1
+name: wecom
+slug: wecom
+protocol: http
+origin: qyapi.weixin.qq.com
+interceptRequests: true
+scenarios:
+  - name: default
+    path: default.js
+    default: true

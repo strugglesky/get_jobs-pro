@@ -1,0 +1,8 @@
+simulation: wecom-delivery-notifications
+routing: path
+mocks:
+  - name: wecom
+    routeKey: wecom
+    origin:
+      - qyapi.weixin.qq.com
+    path: postman/mocks/wecom/config.yaml

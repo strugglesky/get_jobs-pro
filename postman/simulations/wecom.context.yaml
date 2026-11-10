@@ -1,0 +1,30 @@
+purpose:
+  stands_in_for: Enterprise WeChat group robot text webhook, using locally modeled responses.
+  unblocks: Validate Java serialization, finite retries and failure isolation without notifying a real group.
+assumptions:
+  - id: local-caller-response-handling
+    status: supported
+    claim: The Java caller accepts errcode 0, retries modeled rate limits and HTTP 503 at most twice, and isolates malformed responses and timeouts without retry.
+    reason: The real Bot HTTP client ran against the stand-in; response logs, configuration-read counts and request events distinguish retries from dropped messages.
+    verification: On 2026-11-09, all six BotSimulationTest cases passed and simulation logs recorded the expected success, rate-limit, invalid-key, HTTP-error, malformed and timeout requests. The timeout response arrived after the caller's five-second timeout, without an extra request.
+    source: src/test/java/com/getjobs/worker/utils/BotSimulationTest.java; src/main/java/com/getjobs/worker/utils/Bot.java; postman/mocks/wecom/default.js
+    updated_at: "2026-11-09"
+  - id: real-provider-delivery
+    status: unknown
+    claim: A configured production robot key accepts these text notifications and delivers them to the intended group.
+    reason: Local simulation does not establish key validity, group membership, real rate limits or message delivery. No real webhook was contacted.
+    verification: Local mock modeled text/content and errcode/errmsg only. Published owner mock search was skipped because the installed CLI lacks the skill's status command. Verify production credentials through a normal user-initiated delivery.
+    source: postman/mocks/wecom/default.js; postman/simulations/README.md
+    updated_at: "2026-11-09"
+  - id: local-report-attachment-flow
+    status: supported
+    claim: After a delivery run report is queued, the caller sends the summary text, uploads the generated XLSX as media, and sends a file message using the returned media_id.
+    reason: The report notification path depends on this ordering so the group receives both a readable summary and the workbook attachment.
+    verification: On 2026-11-09, BotSimulationTest.sendsSummaryUploadsWorkbookAndSendsFileMessage ran against the local simulation and passed. The simulation log recorded POST /cgi-bin/webhook/send, POST /cgi-bin/webhook/upload_media?type=file, then POST /cgi-bin/webhook/send with the file message; no real webhook was contacted.
+    source: src/main/java/com/getjobs/worker/utils/Bot.java; src/test/java/com/getjobs/worker/utils/BotSimulationTest.java; postman/mocks/wecom/default.js
+    updated_at: "2026-11-09"
+fingerprints:
+  - id: wecom-initial-local-validation
+    date: "2026-11-09"
+    commit: null
+    cli: "Postman CLI 1.75.0; Java 21; Gradle 9.7.1"

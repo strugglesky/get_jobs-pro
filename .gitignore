@@ -3,6 +3,7 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 config.yaml
+!postman/mocks/wecom/config.yaml
 .git-rewrite
 ### IntelliJ IDEA ###
 *.iws
@@ -54,6 +55,7 @@ chromedriver
 !docs/public/images/wechatpay.jpg
 # 运行时上传的个人图片简历，绝不能提交
 /data/boss/resume/
+/data/delivery-reports/
 # 兼容旧版手动放置的图片简历，防止误提交个人文件
 /src/main/resources/resume*
 
