@@ -1,0 +1,188 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  frontend:
+    name: Frontend checks and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+        working-directory: front
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: front/package.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: front/pnpm-lock.yaml
+
+      - name: Install dependencies from lockfile
+        run: pnpm install --frozen-lockfile
+
+      # Existing lint errors are reported without hiding build or type failures.
+      - name: Collect ESLint report (advisory)
+        id: lint
+        continue-on-error: true
+        run: pnpm exec eslint . --format json --output-file eslint-report.json
+
+      - name: Explain lint findings
+        if: ${{ !cancelled() && steps.lint.outcome == 'failure' }}
+        run: |
+          echo '::warning::ESLint found existing violations. See the frontend-lint artifact; lint is advisory until the baseline is fixed.'
+          echo 'ESLint is advisory. Type checking and production builds remain required.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Type check
+        run: |
+          pnpm exec next typegen
+          pnpm exec tsc --noEmit
+
+      - name: Build production frontend
+        run: pnpm run build:prod
+
+      - name: Upload frontend for backend packaging
+        uses: actions/upload-artifact@v6
+        with:
+          name: frontend-dist
+          path: src/main/resources/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload ESLint report
+        if: ${{ !cancelled() && steps.lint.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: frontend-lint
+          path: front/eslint-report.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  backend:
+    name: Backend tests and application package
+    needs: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      BOSS_CHAT_DOM_TEST: 'true'
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      WECOM_SIMULATION_URL: http://127.0.0.1:45123
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Node.js for local mock
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Set up Gradle and validate wrapper
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Download built frontend
+        uses: actions/download-artifact@v7
+        with:
+          name: frontend-dist
+          path: src/main/resources/dist
+
+      - name: Verify frontend is ready for packaging
+        run: test -f src/main/resources/dist/index.html
+
+      - name: Locate Chrome for isolated DOM tests
+        run: |
+          chrome="$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)"
+          if [[ -z "$chrome" ]]; then
+            echo '::error::Chrome is required for BOSS_CHAT_DOM_TEST on this runner.'
+            exit 1
+          fi
+          echo "BOSS_TEST_CHROME=$chrome" >> "$GITHUB_ENV"
+
+      - name: Start local WeCom mock
+        run: |
+          PORT=45123 node postman/mocks/wecom/default.js > "$RUNNER_TEMP/wecom-mock.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/wecom-mock.pid"
+          curl --fail --silent --show-error \
+            --retry 20 --retry-connrefused --retry-delay 1 --retry-max-time 30 --max-time 2 \
+            --header 'Content-Type: application/json' \
+            --data '{"msgtype":"text","text":{"content":"CI readiness check"}}' \
+            'http://127.0.0.1:45123/cgi-bin/webhook/send?key=local-test'
+
+      - name: Test and package application
+        # Override the workstation-only proxy in gradle.properties, including for wrapper downloads.
+        run: >-
+          bash ./gradlew --no-daemon --console=plain
+          -Dhttp.proxyHost= -Dhttps.proxyHost=
+          test bootJar
+
+      - name: Verify packaged frontend
+        run: |
+          for artifact in build/libs/*.jar; do
+            jar tf "$artifact" > "$RUNNER_TEMP/jar-contents.txt"
+            grep -Fx 'BOOT-INF/classes/dist/index.html' "$RUNNER_TEMP/jar-contents.txt"
+          done
+
+      - name: Upload application JAR
+        uses: actions/upload-artifact@v6
+        with:
+          name: get-jobs-application
+          path: build/libs/*.jar
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stop local mock
+        if: ${{ always() }}
+        run: |
+          if [[ -f "$RUNNER_TEMP/wecom-mock.pid" ]]; then
+            kill "$(cat "$RUNNER_TEMP/wecom-mock.pid")" 2>/dev/null || true
+          fi
+
+      - name: Upload test reports and mock diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: backend-test-reports
+          path: |
+            build/reports/tests/test/
+            build/test-results/test/
+            ${{ runner.temp }}/wecom-mock.log
+          if-no-files-found: warn
+          retention-days: 7

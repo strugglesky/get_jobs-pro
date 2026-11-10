@@ -23,8 +23,19 @@ assumptions:
     verification: On 2026-11-09, BotSimulationTest.sendsSummaryUploadsWorkbookAndSendsFileMessage ran against the local simulation and passed. The simulation log recorded POST /cgi-bin/webhook/send, POST /cgi-bin/webhook/upload_media?type=file, then POST /cgi-bin/webhook/send with the file message; no real webhook was contacted.
     source: src/main/java/com/getjobs/worker/utils/Bot.java; src/test/java/com/getjobs/worker/utils/BotSimulationTest.java; postman/mocks/wecom/default.js
     updated_at: "2026-11-09"
+  - id: standalone-node-ci-validation
+    status: supported
+    claim: The committed mock handler can be started directly with Node.js and exercised by the real Java HTTP client without Postman CLI.
+    reason: CI can reuse the same local webhook responses and run existing simulation tests without credentials or a real enterprise group.
+    verification: On 2026-11-10, started postman/mocks/wecom/default.js on a free loopback port and ran Gradle test bootJar with BOSS_CHAT_DOM_TEST and WECOM_SIMULATION_URL enabled. All 83 tests passed with zero skipped, including all seven BotSimulationTest cases. The HTTP tests checked success and warning logs, finite retry configuration-read counts, and summary/upload/file completion. This was a local Windows run; the Ubuntu GitHub Actions workflow has been linted but has not run on GitHub yet. No real webhook was contacted.
+    source: .github/workflows/ci.yml; src/test/java/com/getjobs/worker/utils/BotSimulationTest.java; postman/mocks/wecom/default.js; build/test-results/test/TEST-com.getjobs.worker.utils.BotSimulationTest.xml
+    updated_at: "2026-11-10"
 fingerprints:
   - id: wecom-initial-local-validation
     date: "2026-11-09"
     commit: null
     cli: "Postman CLI 1.75.0; Java 21; Gradle 9.7.1"
+  - id: wecom-standalone-ci-validation
+    date: "2026-11-10"
+    commit: 8022bce29a1c67971d802c0f0e2e66b50b5cfe88
+    cli: "Node.js 26.13.0; Java 21; Gradle 9.7.1; direct mock process; working tree contains uncommitted CI configuration and documentation; Postman CLI not used"

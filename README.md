@@ -234,6 +234,8 @@ release 页面下载空数据库：
 
 ## 🤝 参与贡献
 
+应用构建与测试流水线的触发方式、检查项和产物下载见 [CI 使用说明](doc/ci.md)。
+
 - ⚠️ **本项目禁止一切未经联系与沟通的 PR，会直接拒绝掉，请勿直接提交！**
 - 项目所有需要开发或者改进的需求，都会统一发到 [Ideas 讨论区](https://github.com/loks666/get_jobs/discussions/categories/ideas)，欢迎前往认领相关需求并参与开发。
 
