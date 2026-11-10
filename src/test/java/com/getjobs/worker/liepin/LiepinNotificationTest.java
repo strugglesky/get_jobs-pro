@@ -41,6 +41,7 @@ class LiepinNotificationTest {
         when(cards.count()).thenReturn(1);
         when(cards.nth(0)).thenReturn(card);
         when(card.locator(anyString())).thenReturn(empty);
+        when(card.getAttribute("data-tlg-ext")).thenReturn("{\"jobId\":\"12345\"}");
         Locator buttons = mock(Locator.class);
         Locator button = mock(Locator.class);
         when(card.locator("button.ant-btn.ant-btn-primary.ant-btn-round")).thenReturn(buttons);

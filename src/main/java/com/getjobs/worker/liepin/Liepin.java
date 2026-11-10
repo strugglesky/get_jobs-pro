@@ -354,51 +354,23 @@ public class Liepin {
             }
             // 获取当前岗位卡片（用于后续操作与缺省展示）
             Locator currentJobCard = page.locator(JOB_CARDS).nth(i);
-            // 从接口数据获取展示所需字段，若接口数据缺失则使用缺省占位，仍尝试打招呼
-            String jobName = null;
-            String companyName = null;
-            String salary = null;
-            String recruiterName = null;
-            if (i < lastApiEntities.size()) {
-                LiepinEntity apiEntity = lastApiEntities.get(i);
-                jobName = safeText(apiEntity.getJobTitle());
-                companyName = safeText(apiEntity.getCompName());
-                salary = safeText(apiEntity.getJobSalaryText());
-                recruiterName = safeText(apiEntity.getHrName());
-            }
-            if (deliveryFilter().hasTitleRules()) {
-                try {
-                    // 筛选必须使用当前卡片的岗位名，不能依赖接口列表的顺序。
-                    jobName = currentJobCard.locator(".job-title, [class*='job-title'], [class*='jobTitle']").first()
-                            .innerText(new Locator.InnerTextOptions().setTimeout(1500));
-                } catch (Exception ignored) {
-                    jobName = null;
-                }
-            }
-            if (deliveryFilter().hasTitleRules() && (jobName == null || jobName.isBlank())) {
-                log.info("被过滤：未获取当前岗位名称，无法应用名称筛选");
-                continue;
-            }
-            if (recruiterName == null) recruiterName = "HR";
-            if (jobName == null) jobName = "岗位";
-            if (companyName == null) companyName = "公司";
-            if (salary == null) salary = "";
+            // 只按当前卡片的岗位标识关联接口快照，接口顺序和页面顺序可能不同。
+            CardJob cardJob = readCardJob(currentJobCard);
+            Long jobIdForUpdate = cardJob.id();
+            Job notificationJob = cardJob.job();
+            String jobName = notificationJob.getJobName();
+            String companyName = notificationJob.getCompanyName();
+            String salary = notificationJob.getSalary();
+            String recruiterName = notificationJob.getRecruiter();
+            String jobLink = notificationJob.getHref();
 
             DeliveryFilterService.Decision filterDecision = deliveryFilter().evaluateWithContent(jobName,
-                    () -> {
-                        try {
-                            String contentLink = currentJobCard.locator("a[href*='/job/']").first().getAttribute("href");
-                            return JobDescriptionReader.read(page, Platform.LIEPIN, contentLink);
-                        } catch (Exception ignored) {
-                            return "";
-                        }
-                    });
+                    () -> JobDescriptionReader.read(page, Platform.LIEPIN, jobLink));
             if (!filterDecision.accepted()) {
-                activity("filtered", companyName, jobName, null, filterDecision.reason());
+                activity("filtered", companyName, jobName, jobLink, filterDecision.reason());
                 log.info("被过滤：投递筛选 | 公司：{} | 岗位：{} | 原因：{}", companyName, jobName, filterDecision.reason());
                 continue;
             }
-            String jobLink = i < lastApiEntities.size() ? lastApiEntities.get(i).getJobLink() : null;
             activity("matched", companyName, jobName, jobLink, "通过岗位名称与工作内容筛选");
             if (shouldStop()) return;
             
@@ -547,28 +519,8 @@ public class Liepin {
                 continue;
             }
             
-            // 提取 jobId（用于更新投递状态）
-            Long jobIdForUpdate = null;
-            if (i < lastApiEntities.size()) {
-                jobIdForUpdate = lastApiEntities.get(i).getJobId();
-            }
-            if (jobIdForUpdate == null) {
-                jobIdForUpdate = extractJobIdFromCard(currentJobCard);
-            }
-
-            // 检查按钮文本并点击
+            // 通知、进度和数据库状态均使用点击前从当前卡片取得的同一份岗位快照。
             if (button != null && buttonText.contains("聊一聊")) {
-                Job notificationJob = new Job();
-                notificationJob.setCompanyName(companyName);
-                notificationJob.setJobName(jobName);
-                notificationJob.setSalary(salary);
-                if (i < lastApiEntities.size()) {
-                    notificationJob.setHref(jobLink);
-                    notificationJob.setJobArea(lastApiEntities.get(i).getJobArea());
-                }
-                if (notificationJob.getHref() == null && jobIdForUpdate != null) {
-                    notificationJob.setHref("https://www.liepin.com/job/" + jobIdForUpdate + ".shtml");
-                }
                 boolean clicked = false;
                 try {
                     // 在点击按钮前进行鼠标微调，先向右移动2像素，再向左移动2像素
@@ -657,6 +609,71 @@ public class Liepin {
                     // 不再保存页面源码
                 }
             }
+        }
+    }
+
+    private record CardJob(Long id, Job job) {}
+
+    private CardJob readCardJob(Locator card) {
+        String link = null;
+        try {
+            Locator anchor = card.locator("a[href*='/job/']");
+            if (anchor.count() > 0) {
+                link = DeliveryNotification.normalizeLink(Platform.LIEPIN, anchor.first().getAttribute("href"));
+            }
+        } catch (RuntimeException ignored) {}
+        Long linkId = jobIdFromLink(link);
+        Long id = extractJobIdFromCard(card);
+        if (id == null) id = linkId;
+        // 不接受其他岗位或其他网站的链接；有岗位 ID 时可以构造规范详情地址。
+        if (id == null || !id.equals(linkId)) {
+            link = id == null ? null : "https://www.liepin.com/job/" + id + ".shtml";
+        }
+        LiepinEntity snapshot = null;
+        if (id != null) {
+            for (LiepinEntity candidate : lastApiEntities) {
+                if (id.equals(candidate.getJobId())) {
+                    snapshot = candidate;
+                    break;
+                }
+            }
+        }
+        Job job = new Job();
+        job.setHref(link);
+        job.setJobName(cardText(card, ".job-title, [class*='job-title'], [class*='jobTitle']",
+                snapshot == null ? null : snapshot.getJobTitle()));
+        job.setCompanyName(cardText(card, ".company-name, [class*='company-name'], [class*='companyName'], a[href*='/company/']",
+                snapshot == null ? null : snapshot.getCompName()));
+        job.setSalary(cardText(card, ".job-salary, [class*='job-salary'], [class*='jobSalary']",
+                snapshot == null ? null : snapshot.getJobSalaryText()));
+        job.setJobArea(cardText(card, ".job-dq-box, .job-area, [class*='job-area'], [class*='jobArea']",
+                snapshot == null ? null : snapshot.getJobArea()));
+        job.setRecruiter(snapshot == null ? null : snapshot.getHrName());
+        return new CardJob(id, job);
+    }
+
+    private String cardText(Locator card, String selector, String fallback) {
+        try {
+            Locator field = card.locator(selector);
+            if (field.count() > 0) {
+                String text = safeText(field.first().innerText(new Locator.InnerTextOptions().setTimeout(1500)));
+                if (text != null) return text;
+            }
+        } catch (RuntimeException ignored) {}
+        return safeText(fallback);
+    }
+
+    private Long jobIdFromLink(String link) {
+        if (link == null) return null;
+        try {
+            java.net.URI address = java.net.URI.create(link);
+            String host = address.getHost();
+            if (host == null || !(host.equalsIgnoreCase("liepin.com")
+                    || host.toLowerCase(java.util.Locale.ROOT).endsWith(".liepin.com"))) return null;
+            var match = java.util.regex.Pattern.compile("^/job/(\\d+)\\.shtml$").matcher(address.getPath());
+            return match.matches() ? Long.valueOf(match.group(1)) : null;
+        } catch (IllegalArgumentException e) {
+            return null;
         }
     }
 
