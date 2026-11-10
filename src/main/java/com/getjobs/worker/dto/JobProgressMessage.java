@@ -42,6 +42,20 @@ public class JobProgressMessage {
      */
     private Long timestamp;
 
+    private String company;
+    private String jobTitle;
+    private String jobLink;
+    private String deliveryStatus;
+
+    public JobProgressMessage(String platform, String type, String message, Integer current, Integer total, Long timestamp) {
+        this.platform = platform;
+        this.type = type;
+        this.message = message;
+        this.current = current;
+        this.total = total;
+        this.timestamp = timestamp;
+    }
+
     /**
      * 创建进度消息
      */
@@ -75,5 +89,36 @@ public class JobProgressMessage {
      */
     public static JobProgressMessage warning(String platform, String message) {
         return new JobProgressMessage(platform, "warning", message, null, null, System.currentTimeMillis());
+    }
+
+    public static JobProgressMessage delivery(String platform, DeliveryNotification notification) {
+        JobProgressMessage message = new JobProgressMessage(platform, "delivery",
+                notification.detail(), null, null, System.currentTimeMillis());
+        message.company = notification.company();
+        message.jobTitle = notification.title();
+        message.jobLink = notification.link();
+        message.deliveryStatus = notification.status().label();
+        return message;
+    }
+
+    public static JobProgressMessage activity(String platform, String type, String company, String title,
+                                              String link, String detail) {
+        JobProgressMessage message = info(platform, detail);
+        message.type = type;
+        message.company = company;
+        message.jobTitle = title;
+        message.jobLink = DeliveryNotification.normalizeLink(switch (platform) {
+            case "boss" -> com.getjobs.worker.utils.Platform.BOSS;
+            case "liepin" -> com.getjobs.worker.utils.Platform.LIEPIN;
+            case "51job" -> com.getjobs.worker.utils.Platform.JOB51;
+            case "zhilian" -> com.getjobs.worker.utils.Platform.ZHILIAN;
+            default -> throw new IllegalArgumentException("Unknown platform: " + platform);
+        }, link);
+        return message;
+    }
+
+    public static JobProgressMessage found(String platform, int count) {
+        return new JobProgressMessage(platform, "found", "当前列表发现 " + count + " 个岗位，正在逐一筛选", count, null,
+                System.currentTimeMillis());
     }
 }

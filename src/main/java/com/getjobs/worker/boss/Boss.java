@@ -4,7 +4,13 @@ import com.getjobs.application.entity.AiEntity;
 import com.getjobs.application.service.AiService;
 import com.getjobs.application.service.BossResumeImageService;
 import com.getjobs.application.service.BossService;
+import com.getjobs.application.service.DeliveryFilterService;
 import com.getjobs.worker.utils.Job;
+import com.getjobs.worker.utils.BackgroundPages;
+import com.getjobs.worker.utils.Bot;
+import com.getjobs.worker.utils.Platform;
+import com.getjobs.worker.dto.DeliveryNotification;
+import com.getjobs.worker.dto.JobProgressMessage;
 import com.getjobs.worker.utils.JobUtils;
 import com.getjobs.worker.utils.PlaywrightUtil;
 import com.microsoft.playwright.Frame;
@@ -52,6 +58,10 @@ public class Boss {
     private final BossService bossService;
     private final AiService aiService;
     private final BossResumeImageService bossResumeImageService;
+    private final Bot bot;
+    @org.springframework.beans.factory.annotation.Autowired
+    private DeliveryFilterService deliveryFilterService;
+    private DeliveryFilterService.DeliveryFilter deliveryFilter;
     private Set<String> blackCompanies;
     private Set<String> blackRecruiters;
     private Set<String> blackJobs;
@@ -97,6 +107,7 @@ public class Boss {
         this.blackCompanies = bossService.getBlackCompanies();
         this.blackRecruiters = bossService.getBlackRecruiters();
         this.blackJobs = bossService.getBlackJobs();
+        this.deliveryFilter = deliveryFilterService == null ? DeliveryFilterService.empty() : deliveryFilterService.snapshot();
 
         log.info("黑名单加载完成: 公司({}) 招聘者({}) 职位({})",
                 blackCompanies != null ? blackCompanies.size() : 0,
@@ -318,6 +329,7 @@ public class Boss {
             int loadedCount = countJobCards();
             log.info("【{}】岗位已全部加载，总数:{}", keyword, loadedCount);
             progressCallback.accept("岗位加载完成：" + keyword, 0, loadedCount);
+            foundJobs(loadedCount);
 
             // 2. 回到页面顶部
             page.evaluate("window.scrollTo(0, 0);");
@@ -372,6 +384,7 @@ public class Boss {
                 String bossActive = null;
                 String bossCompany = null;
                 String bossJobTitle = null;
+                String jobDetailLink = null;
 
                 if (detailResp != null) {
                     try {
@@ -389,6 +402,8 @@ public class Boss {
                         org.json.JSONObject boss = zpData != null ? zpData.optJSONObject("bossInfo") : null;
 
                         if (jobInfo != null) {
+                            String id = jobInfo.optString("encryptId", "");
+                            if (!id.isBlank()) jobDetailLink = "https://www.zhipin.com/job_detail/" + id + ".html";
                             jobName = jobInfo.optString("jobName", "");
                             jobSalary = jobInfo.optString("salaryDesc", "");
                             String city = jobInfo.optString("locationName", "");
@@ -439,6 +454,7 @@ public class Boss {
 
                 // 创建Job对象（全部基于 JSON 字段）
                 Job job = new Job();
+                job.setHref(jobDetailLink);
                 job.setJobName(jobName != null ? jobName : "");
                 job.setSalary(jobSalary != null ? jobSalary : "");
                 job.setJobArea(String.join(", ", tags));
@@ -539,7 +555,7 @@ public class Boss {
             }
 
             // 黑名单处理
-            boolean filtered = false;
+            boolean filtered = !deliveryFilter().evaluate(entity.getJobName(), entity.getJobDescription()).accepted();
             String companyName = entity.getCompanyName() != null ? entity.getCompanyName() : "";
             String positionName = entity.getJobName() != null ? entity.getJobName() : "";
             String hrPosition = entity.getHrPosition() != null ? entity.getHrPosition() : "";
@@ -1007,27 +1023,34 @@ public class Boss {
             log.info("停止指令已触发，跳过投递 | 公司：{} | 岗位：{}", job.getCompanyName(), job.getJobName());
             return false;
         }
+        DeliveryFilterService.Decision filterDecision = deliveryFilter().evaluate(job.getJobName(), job.getJobInfo());
+        if (!filterDecision.accepted()) {
+            activity("filtered", job.getCompanyName(), job.getJobName(), job.getHref(), filterDecision.reason());
+            log.info("被过滤：投递筛选 | 公司：{} | 岗位：{} | 原因：{}", job.getCompanyName(), job.getJobName(), filterDecision.reason());
+            return false;
+        }
+        activity("matched", job.getCompanyName(), job.getJobName(), job.getHref(), "通过岗位名称与工作内容筛选");
         // 调试模式：仅遍历不投递
         if (Boolean.TRUE.equals(config.getDebugger())) {
+            activity("skipped", job.getCompanyName(), job.getJobName(), job.getHref(), "调试模式仅筛选，不会实际投递");
             log.info("调试模式：仅遍历岗位，不投递 | 公司：{} | 岗位：{}", job.getCompanyName(), job.getJobName());
             return false;
         }
 
-        // 1. 查找"查看更多信息"按钮（必须存在且新开页）
         Locator moreInfoBtn = page.locator("a.more-job-btn");
-        if (moreInfoBtn.count() == 0) {
-            log.warn("未找到\"查看更多信息\"按钮，跳过...");
+        String detailUrl = validDetailLink(job.getHref());
+        if (detailUrl == null && moreInfoBtn.count() > 0) {
+            detailUrl = validDetailLink(moreInfoBtn.first().getAttribute("href"));
+        }
+        if (detailUrl == null) {
+            activity("skipped", job.getCompanyName(), job.getJobName(), job.getHref(),
+                    "未获取到有效岗位详情链接");
             return false;
         }
-        // 强制用js新开tab
-        String href = moreInfoBtn.first().getAttribute("href");
-        if (href == null || !href.startsWith("/job_detail/")) {
-            log.warn("未获取到岗位详情链接，跳过...");
-            return false;
-        }
-        String detailUrl = "https://www.zhipin.com" + href;
+        job.setHref(detailUrl);
+        boolean deliveryAttempted = false;
         // 2. 在新窗口打开详情页
-        Page detailPage = page.context().newPage();
+        Page detailPage = BackgroundPages.open(page);
         try (BossChatNavigator navigator = new BossChatNavigator(detailPage)) {
             detailPage.navigate(detailUrl);
             PlaywrightUtil.sleep(1);
@@ -1047,6 +1070,7 @@ public class Boss {
                     String buttonText = chatBtn.first().textContent();
                     if (buttonText != null && buttonText.contains("继续沟通")
                             && !Boolean.TRUE.equals(config.getAllowRepeatChat())) {
+                        activity("skipped", job.getCompanyName(), job.getJobName(), detailUrl, "已沟通过且未开启重复沟通");
                         log.info("已关闭重复沟通，跳过已沟通Boss | 公司：{} | 岗位：{}", job.getCompanyName(), job.getJobName());
                         try { detailPage.close(); } catch (Exception ignore) {}
                         return false;
@@ -1061,6 +1085,7 @@ public class Boss {
                 PlaywrightUtil.sleep(1);
             }
             if (!foundChatBtn) {
+                activity("skipped", job.getCompanyName(), job.getJobName(), detailUrl, "未找到可用的沟通按钮");
                 log.warn("未找到可用的沟通按钮，跳过岗位: {}", job.getJobName());
                 // 关闭详情页
                 try {
@@ -1072,20 +1097,28 @@ public class Boss {
             if (repeatChat) {
                 repeatMessage = config.randomRepeatChatMessage();
                 if (repeatMessage == null) {
+                    activity("skipped", job.getCompanyName(), job.getJobName(), detailUrl, "重复沟通消息为空");
                     log.info("重复沟通消息列表为空，跳过岗位：{}", job.getJobName());
                     try { detailPage.close(); } catch (Exception ignore) {}
                     return false;
                 }
             }
+            deliveryAttempted = true;
+            activity("delivering", job.getCompanyName(), job.getJobName(), detailUrl, "正在发起沟通并投递简历");
             BossChatNavigator.Chat chat = navigator.open(chatBtn.first(), repeatChat,
                     Boolean.TRUE.equals(config.getAllowRepeatChat()), shouldStopCallback, 20_000);
-            if (chat == null) return false;
+            if (chat == null) {
+                notifyDelivery(DeliveryNotification.of(Platform.BOSS, job,
+                        DeliveryNotification.Status.UNCONFIRMED, "已尝试发起沟通，但未确认聊天窗口；请到平台核实"));
+                return false;
+            }
             detailPage = chat.page();
             repeatChat = chat.repeat();
             // 重复沟通状态由岗位按钮决定，通知框本身不代表旧会话。
             if (repeatChat && repeatMessage == null) {
                 repeatMessage = config.randomRepeatChatMessage();
                 if (repeatMessage == null) {
+                    activity("skipped", job.getCompanyName(), job.getJobName(), detailUrl, "重复沟通消息为空");
                     log.info("重复沟通消息列表为空，跳过岗位：{}", job.getJobName());
                     return false;
                 }
@@ -1099,6 +1132,7 @@ public class Boss {
                 if (jd != null && !jd.isEmpty()) {
                     AiMessageDecision decision = generateAiMessage(keyword, job.getJobName(), jd);
                     if (decision.skipCurrentJob()) {
+                        activity("skipped", job.getCompanyName(), job.getJobName(), detailUrl, "AI判断岗位不匹配");
                         log.info("AI返回false，跳过当前岗位投递 | 公司：{} | 岗位：{}",
                                 job.getCompanyName(), job.getJobName());
                         if (progressCallback != null) {
@@ -1178,8 +1212,30 @@ public class Boss {
                     }
                 }
             }
+            notifyDelivery(DeliveryNotification.of(Platform.BOSS, job,
+                    sendSuccess ? DeliveryNotification.Status.SUBMITTED : DeliveryNotification.Status.FAILED,
+                    sendSuccess ? (repeatChat ? "再次沟通：已点击发送，平台送达结果未确认" : "首次沟通：已点击发送，平台送达结果未确认")
+                            + "；图片简历：" + (Boolean.TRUE.equals(config.getSendImgResume()) ? (imgResume ? "已确认发送" : "未确认发送") : "未启用")
+                            : "未找到消息发送按钮，打招呼语未发送"));
             return sendSuccess;
+        } catch (Exception e) {
+            if (deliveryAttempted) {
+                notifyDelivery(DeliveryNotification.of(Platform.BOSS, job,
+                        DeliveryNotification.Status.UNCONFIRMED, "沟通过程异常，平台结果未确认（" + e.getClass().getSimpleName() + "）"));
+            } else {
+                activity("skipped", job.getCompanyName(), job.getJobName(), detailUrl,
+                        "岗位详情加载异常，未投递：" + e.getClass().getSimpleName());
+            }
+            throw e;
         }
+    }
+
+    private String validDetailLink(String link) {
+        String normalized = DeliveryNotification.normalizeLink(Platform.BOSS, link);
+        if (normalized == null) return null;
+        java.net.URI address = java.net.URI.create(normalized);
+        return "www.zhipin.com".equalsIgnoreCase(address.getHost()) && address.getPath() != null
+                && address.getPath().startsWith("/job_detail/") ? normalized : null;
     }
 
     
@@ -1855,4 +1911,29 @@ public class Boss {
         return false;
     }
 
+    @Setter
+    private java.util.function.Consumer<JobProgressMessage> activityCallback;
+
+    private void activity(String type, String company, String title, String link, String detail) {
+        if (activityCallback != null) activityCallback.accept(JobProgressMessage.activity("boss", type, company, title, link, detail));
+    }
+
+    private void foundJobs(int count) {
+        if (activityCallback != null) activityCallback.accept(JobProgressMessage.found("boss", count));
+    }
+
+    @Setter
+    private java.util.function.Consumer<DeliveryNotification> deliveryCallback;
+
+    private void notifyDelivery(DeliveryNotification notification) {
+        if (deliveryCallback != null) deliveryCallback.accept(notification);
+        bot.notifyDelivery(notification);
+    }
+
+    private DeliveryFilterService.DeliveryFilter deliveryFilter() {
+        if (deliveryFilter == null) {
+            deliveryFilter = deliveryFilterService == null ? DeliveryFilterService.empty() : deliveryFilterService.snapshot();
+        }
+        return deliveryFilter;
+    }
 }

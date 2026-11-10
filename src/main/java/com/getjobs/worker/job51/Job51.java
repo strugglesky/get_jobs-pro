@@ -1,7 +1,15 @@
 package com.getjobs.worker.job51;
 
 import com.getjobs.application.service.Job51Service;
+import com.getjobs.application.service.DeliveryFilterService;
 import com.getjobs.worker.utils.JobUtils;
+import com.getjobs.worker.utils.Bot;
+import com.getjobs.worker.utils.Job;
+import com.getjobs.worker.utils.Platform;
+import com.getjobs.worker.utils.JobDescriptionReader;
+import com.getjobs.worker.dto.DeliveryNotification;
+import com.getjobs.worker.dto.JobProgressMessage;
+import com.getjobs.worker.dto.BatchDeliveryOutcome;
 import com.getjobs.worker.utils.PlaywrightUtil;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
@@ -43,6 +51,10 @@ public class Job51 {
 
     private final List<String> resultList = new ArrayList<>();
     private final Job51Service job51Service;
+    private final Bot bot;
+    @org.springframework.beans.factory.annotation.Autowired
+    private DeliveryFilterService deliveryFilterService;
+    private DeliveryFilterService.DeliveryFilter deliveryFilter;
     private boolean networkHooked = false;
     private boolean reachedDailyLimit = false;
     private final java.util.Set<String> processedRequestIds = new java.util.HashSet<>();
@@ -67,6 +79,7 @@ public class Job51 {
      */
     public void prepare() {
         resultList.clear();
+        this.deliveryFilter = deliveryFilterService == null ? DeliveryFilterService.empty() : deliveryFilterService.snapshot();
     }
 
     /**
@@ -263,59 +276,148 @@ public class Job51 {
             Locator companies = page.locator("[class*='cname text-cut']");
 
             int jobCount = checkboxes.count();
+            foundJobs(jobCount);
 
-            // 选中所有职位
+            // 每个岗位通过筛选后立即单独提交，避免整页筛选耗时或停止请求使已匹配岗位未投递。
             for (int i = 0; i < jobCount; i++) {
                 if (shouldStop()) {
                     return;
                 }
 
+                String title = "";
+                String company = "";
                 try {
                     Locator checkbox = checkboxes.nth(i);
+                    title = i < titles.count() ? titles.nth(i).textContent() : "未知职位";
+                    company = i < companies.count() ? companies.nth(i).textContent() : "未知公司";
+                    final int jobIndex = i;
+                    DeliveryFilterService.Decision filterDecision = deliveryFilter().evaluateWithContent(title, () -> {
+                        String link = jobIndex < titles.count() ? (String) titles.nth(jobIndex).evaluate(
+                                "el => (el.closest('a[href]') || el.querySelector('a[href]'))?.href || ''") : "";
+                        return JobDescriptionReader.read(page, Platform.JOB51, link);
+                    });
+                    if (!filterDecision.accepted()) {
+                        activity("filtered", company, title, null, filterDecision.reason());
+                        log.info("被过滤：投递筛选 | 公司：{} | 岗位：{} | 原因：{}", company, title, filterDecision.reason());
+                        continue;
+                    }
+                    if (shouldStop()) return;
                     // 使用JavaScript点击，避免元素被遮挡
+                    clearSelections();
                     checkbox.evaluate("el => el.click()");
 
-                    String title = i < titles.count() ? titles.nth(i).textContent() : "未知职位";
-                    String company = i < companies.count() ? companies.nth(i).textContent() : "未知公司";
-                    String jobInfo = company + " | " + title;
-                    resultList.add(jobInfo);
-//                    log.info("选中: {}", jobInfo);
-                } catch (Exception e) { /* 静默 */ }
+                    Job notificationJob = new Job();
+                    notificationJob.setJobName(title);
+                    notificationJob.setCompanyName(company);
+                    if (i < titles.count()) {
+                        try {
+                            String link = (String) titles.nth(i).evaluate("el => (el.closest('a[href]') || el.querySelector('a[href]'))?.href || ''");
+                            notificationJob.setHref(link);
+                            var snapshot = job51Service.findJobById(parseJobIdFromHref(link));
+                            if (snapshot != null) {
+                                notificationJob.setJobName(snapshot.getJobTitle());
+                                notificationJob.setCompanyName(snapshot.getCompName());
+                                notificationJob.setHref(snapshot.getJobLink());
+                                notificationJob.setSalary(snapshot.getJobSalaryText());
+                                notificationJob.setJobArea(snapshot.getJobArea());
+                            }
+                        } catch (Exception ignored) { /* 缺少可匹配快照时保留页面字段 */ }
+                    }
+                    activity("matched", notificationJob.getCompanyName(), notificationJob.getJobName(), notificationJob.getHref(), "通过筛选，准备提交投递");
+                    submitSelectedJob(notificationJob);
+                    if (reachedDailyLimit || shouldStop()) return;
+                } catch (Exception e) {
+                    log.warn("处理第 {} 个岗位失败", i + 1, e);
+                    activity("skipped", company, title, null, "岗位操作失败：" + e.getClass().getSimpleName());
+                }
             }
 
-            PlaywrightUtil.sleep(1);
+        } catch (Exception e) {
+            log.error("Failed to process current page", e);
+            sendProgress("处理岗位列表失败: " + e.getMessage(), null, null);
+        }
+    }
 
-            // 滚动到页面顶部
+    private void clearSelections() {
+        Locator selections = page.locator("div.ick");
+        for (int i = 0; i < selections.count(); i++) {
+            selections.nth(i).evaluate("""
+                    el => {
+                      const input = el.querySelector('input[type="checkbox"]');
+                      const checked = input ? input.checked : el.getAttribute('aria-checked') === 'true'
+                        || ['on', 'checked', 'is-checked', 'selected'].some(name => el.classList.contains(name));
+                      if (checked) el.click();
+                    }
+                    """);
+        }
+    }
+
+    private void submitSelectedJob(Job selectedJob) {
+        List<Job> selectedJobs = List.of(selectedJob);
+        boolean attempted = false;
+        boolean notified = false;
+        try {
+            if (shouldStop()) return;
             page.evaluate("window.scrollTo(0, 0)");
-            PlaywrightUtil.sleep(1);
-
             // 点击批量投递按钮
-            clickBatchDeliverButton();
+            for (Job job : selectedJobs) {
+                activity("delivering", job.getCompanyName(), job.getJobName(), job.getHref(), "正在提交当前岗位");
+            }
+            DeliveryNotification.Status clickStatus = clickBatchDeliverButton();
+            if (clickStatus == null) {
+                activity("skipped", selectedJob.getCompanyName(), selectedJob.getJobName(), selectedJob.getHref(),
+                        "未找到可用的投递按钮或收到停止请求，未投递");
+                return;
+            }
+            attempted = true;
+            var deliveryTime = java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Shanghai"));
 
             PlaywrightUtil.sleep(3);
 
             // 处理投递成功弹窗
-            handleDeliverySuccessDialog();
+            BatchDeliveryOutcome outcome = handleDeliverySuccessDialog(selectedJobs);
 
             // 处理单独投递申请弹窗
             handleSeparateDeliveryDialog();
+            DeliveryNotification.Status status = outcome != null ? outcome.statusFor(selectedJobs.size())
+                    : reachedDailyLimit ? DeliveryNotification.Status.LIMITED : clickStatus;
+            String detail = outcome != null ? outcome.describe()
+                    : reachedDailyLimit ? "批量投递时检测到平台上限提示，未取得逐岗位结果"
+                    : "已尝试批量投递，未读取到平台结果弹窗，请到平台核实";
+            for (Job job : selectedJobs) {
+                var notification = DeliveryNotification.of(Platform.JOB51, job, status, detail);
+                notifyDelivery(new DeliveryNotification(notification.platform(), notification.company(), notification.title(),
+                        notification.link(), notification.salary(), notification.area(), deliveryTime, status, detail));
+            }
+            if (status == DeliveryNotification.Status.SUCCESS || status == DeliveryNotification.Status.SUBMITTED) {
+                resultList.add(selectedJob.getCompanyName() + " | " + selectedJob.getJobName());
+            }
+            notified = true;
 
         } catch (Exception e) {
-            log.error("投递当前页面失败", e);
+            log.error("单岗位投递失败: {}", selectedJob.getJobName(), e);
+            activity("skipped", selectedJob.getCompanyName(), selectedJob.getJobName(), selectedJob.getHref(),
+                    attempted ? "投递后处理异常，结果未确认" : "提交投递失败：" + e.getClass().getSimpleName());
+            if (attempted && !notified) {
+                for (Job job : selectedJobs) {
+                    notifyDelivery(DeliveryNotification.of(Platform.JOB51, job,
+                            DeliveryNotification.Status.UNCONFIRMED, "批量投递后处理异常，请到平台核实"));
+                }
+            }
         }
     }
 
     /**
      * 点击批量投递按钮
      */
-    private void clickBatchDeliverButton() {
+    private DeliveryNotification.Status clickBatchDeliverButton() {
         int retryCount = 0;
         boolean success = false;
 
         while (!success && retryCount < 5) {
             try {
                 if (shouldStop()) {
-                    return;
+                    return null;
                 }
 
                 // 查找批量投递按钮
@@ -333,25 +435,28 @@ public class Job51 {
                             reachedDailyLimit = true;
                             log.warn("点击投递按钮后，检测到 51job 日投递上限提示，停止投递");
                             sendProgress("检测到日投递上限，任务已停止", null, null);
-                            return;
+                            return DeliveryNotification.Status.LIMITED;
                         }
                     }
                     
                     success = true;
+                    return DeliveryNotification.Status.SUBMITTED;
                 } else {
-                    break;
+                    return null;
                 }
             } catch (Exception e) {
                 retryCount++;
                 PlaywrightUtil.sleep(1);
             }
         }
+        return DeliveryNotification.Status.UNCONFIRMED;
     }
 
     /**
      * 处理投递成功弹窗
      */
-    private void handleDeliverySuccessDialog() {
+    private BatchDeliveryOutcome handleDeliverySuccessDialog(List<Job> selectedJobs) {
+        BatchDeliveryOutcome outcome = null;
         try {
             PlaywrightUtil.sleep(2);
 
@@ -384,20 +489,16 @@ public class Job51 {
                     } catch (Exception ignored) {}
                     log.info("[51job] 投递结果：成功 {} 个，未投递 {} 个", successNum, failNum);
                     sendProgress(String.format("投递结果：成功 %s 个，未投递 %s 个", successNum == null ? "?" : successNum, failNum == null ? "?" : failNum), null, null);
+                    outcome = new BatchDeliveryOutcome(successNum, failNum);
 
-                    // ✅ 投递成功后，标记数据库中的岗位为已投递
-                    if (successNum != null && successNum > 0) {
+                    // 仅确认整批成功时标记；部分成功没有岗位映射，不能猜前 N 个成功。
+                    if (outcome.statusFor(selectedJobs.size()) == DeliveryNotification.Status.SUCCESS) {
                         try {
-                            List<Long> deliveredIds = new ArrayList<>();
-                            synchronized (currentPageJobIds) {
-                                deliveredIds.addAll(currentPageJobIds);
-                            }
-                            if (!deliveredIds.isEmpty()) {
-                                // 只标记成功投递的数量（取成功数和缓存数的较小值）
-                                int markCount = Math.min(successNum, deliveredIds.size());
-                                List<Long> toMark = deliveredIds.subList(0, markCount);
-                                job51Service.markDeliveredBatch(toMark);
-                                log.info("[51job] 标记已投递 {} 个职位", toMark.size());
+                            List<Long> deliveredIds = selectedJobs.stream().map(Job::getHref)
+                                    .map(this::parseJobIdFromHref).filter(java.util.Objects::nonNull).distinct().toList();
+                            if (deliveredIds.size() == selectedJobs.size()) {
+                                job51Service.markDeliveredBatch(deliveredIds);
+                                log.info("[51job] 标记已投递 {} 个职位", deliveredIds.size());
                             } else {
                                 log.warn("[51job] 当前页没有缓存的jobId，无法标记投递状态");
                             }
@@ -405,7 +506,7 @@ public class Job51 {
                             log.warn("[51job] 标记投递状态失败: {}", e.getMessage());
                         }
                     } else {
-                        log.warn("[51job] 投递成功数量为0或未解析到，不标记投递状态");
+                        log.info("[51job] 未确认整批成功，不推断逐岗位投递状态");
                     }
 
                     // 优先点击“确定/关闭”按钮，其次点右上角关闭，再次退格键
@@ -463,6 +564,7 @@ public class Job51 {
         } catch (Exception e) {
             log.debug("未找到投递成功弹窗或处理失败: {}", e.getMessage());
         }
+        return outcome;
     }
 
     /**
@@ -528,12 +630,10 @@ public class Job51 {
                 log.warn("跳转到第{}页失败，重试第{}次: {}", pageNum, retry + 1, e.getMessage());
                 PlaywrightUtil.sleep(1);
 
-                // 检查是否出现异常，如果出现则刷新页面
+                // 页面异常时保留现场，不能通过反复刷新打断投递或验证码处理。
                 if (checkAccessVerification()) {
                     return false;
                 }
-                page.reload();
-                PlaywrightUtil.sleep(2);
             }
         }
         return false;
@@ -871,5 +971,30 @@ public class Job51 {
         }
         
         return jobIds;
+    }
+    @Setter
+    private java.util.function.Consumer<JobProgressMessage> activityCallback;
+
+    private void activity(String type, String company, String title, String link, String detail) {
+        if (activityCallback != null) activityCallback.accept(JobProgressMessage.activity("51job", type, company, title, link, detail));
+    }
+
+    private void foundJobs(int count) {
+        if (activityCallback != null) activityCallback.accept(JobProgressMessage.found("51job", count));
+    }
+
+    @Setter
+    private java.util.function.Consumer<DeliveryNotification> deliveryCallback;
+
+    private void notifyDelivery(DeliveryNotification notification) {
+        if (deliveryCallback != null) deliveryCallback.accept(notification);
+        bot.notifyDelivery(notification);
+    }
+
+    private DeliveryFilterService.DeliveryFilter deliveryFilter() {
+        if (deliveryFilter == null) {
+            deliveryFilter = deliveryFilterService == null ? DeliveryFilterService.empty() : deliveryFilterService.snapshot();
+        }
+        return deliveryFilter;
     }
 }

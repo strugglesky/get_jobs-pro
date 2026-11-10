@@ -2,7 +2,13 @@ package com.getjobs.worker.zhilian;
 
 import com.getjobs.application.entity.ZhilianJobDataEntity;
 import com.getjobs.application.service.ZhilianService;
+import com.getjobs.application.service.DeliveryFilterService;
 import com.getjobs.worker.utils.Job;
+import com.getjobs.worker.utils.Bot;
+import com.getjobs.worker.utils.Platform;
+import com.getjobs.worker.utils.JobDescriptionReader;
+import com.getjobs.worker.dto.DeliveryNotification;
+import com.getjobs.worker.dto.JobProgressMessage;
 import com.getjobs.worker.utils.JobUtils;
 import com.getjobs.worker.utils.PlaywrightUtil;
 import com.microsoft.playwright.Locator;
@@ -47,12 +53,17 @@ public class ZhiLian {
     private static final String HOME_URL = "https://www.zhaopin.com/sou/";
 
     private final ZhilianService zhilianService;
+    private final Bot bot;
+    @org.springframework.beans.factory.annotation.Autowired
+    private DeliveryFilterService deliveryFilterService;
+    private DeliveryFilterService.DeliveryFilter deliveryFilter;
 
     private static class PageJob {
         int index;
         String jobId;
         String jobTitle;
         String companyName;
+        Job notificationJob;
 
         PageJob(int index, String jobId, String jobTitle, String companyName) {
             this.index = index;
@@ -76,6 +87,7 @@ public class ZhiLian {
     public void prepare() {
         log.info("智联招聘准备工作开始...");
         resultList.clear();
+        this.deliveryFilter = deliveryFilterService == null ? DeliveryFilterService.empty() : deliveryFilterService.snapshot();
         isLimit = false;
         log.info("智联招聘准备工作完成");
     }
@@ -175,12 +187,12 @@ public class ZhiLian {
 
                 // 等待岗位列表出现（CSS选择器）
                 try {
-                    page.waitForSelector("div.positionlist",
+                    page.waitForSelector("div.joblist-box__item",
                         new Page.WaitForSelectorOptions().setTimeout(10_000));
                 } catch (Exception e) {
-                    log.warn("等待岗位列表失败，刷新页面重试");
-                    page.reload();
-                    PlaywrightUtil.sleep(1);
+                    log.warn("等待岗位列表失败，结束当前关键词，保留页面供检查：{}", page.url());
+                    sendProgress("岗位列表未加载，已结束当前关键词，请检查招聘网站页面", null, null);
+                    return;
                 }
 
                 // 投递当前页面
@@ -232,10 +244,8 @@ public class ZhiLian {
             Locator cards = page.locator("div.joblist-box__item");
             int count = cards.count();
             log.info("检测到当前页岗位数量: {}", count);
+            foundJobs(count);
 
-            List<PageJob> jobs = new ArrayList<>();
-            // 统一采集当前页岗位后再保存（不在循环中逐个入库）
-            List<ZhilianJobDataEntity> toInsert = new ArrayList<>();
 
             for (int i = 0; i < count; i++) {
                 if (shouldStop()) {
@@ -252,8 +262,21 @@ public class ZhiLian {
                 String experience = safeGetText(card, "div.jobinfo__other-info-item:nth-child(2)");
                 String degree = safeGetText(card, "div.jobinfo__other-info-item:nth-child(3)");
                 String companyName = safeGetText(card, "div.companyinfo__name");
+                final String contentLink = jobLink;
+                DeliveryFilterService.Decision filterDecision = deliveryFilter().evaluateWithContent(jobTitle,
+                        () -> JobDescriptionReader.read(page, Platform.ZHILIAN, contentLink));
+                if (!filterDecision.accepted()) {
+                    activity("filtered", companyName, jobTitle, jobLink, filterDecision.reason());
+                    log.info("被过滤：投递筛选 | 公司：{} | 岗位：{} | 原因：{}", companyName, jobTitle, filterDecision.reason());
+                    continue;
+                }
+                if (shouldStop()) return false;
 
                 String jobId = extractJobIdFromLink(jobLink);
+                if ((jobId == null || jobId.isBlank()) && (jobTitle == null || jobTitle.isBlank())) {
+                    activity("skipped", companyName, jobTitle, jobLink, "缺少岗位标识和岗位名称，无法发起投递");
+                    continue;
+                }
 
                 try {
                     String jid = jobId == null ? "" : jobId.trim();
@@ -278,38 +301,27 @@ public class ZhiLian {
                             entity.setDegree(degree);
                             entity.setCompanyName(companyName);
                             entity.setDeliveryStatus("未投递");
-                            toInsert.add(entity);
+                            zhilianService.insertJob(entity);
                         }
                     }
                 } catch (Exception ex) {
                     log.warn("采集岗位数据失败: {}", ex.getMessage());
                 }
 
-                jobs.add(new PageJob(i, jobId, jobTitle, companyName));
-            }
-
-            // 统一保存采集到的一整页岗位
-            if (!toInsert.isEmpty()) {
-                for (ZhilianJobDataEntity entity : toInsert) {
-                    try {
-                        zhilianService.insertJob(entity);
-                        log.info("已保存岗位数据：jobId={}，title={}，company={}", entity.getJobId(), entity.getJobTitle(), entity.getCompanyName());
-                    } catch (Exception ex) {
-                        log.warn("保存岗位数据失败: {}", ex.getMessage());
-                    }
-                }
-            }
-
-            for (PageJob pj : jobs) {
-                if (shouldStop()) {
-                    sendProgress("用户取消投递或已达上限", null, null);
-                    return false;
-                }
-
-                Locator card = page.locator("div.joblist-box__item").nth(pj.index);
+                PageJob pageJob = new PageJob(i, jobId, jobTitle, companyName);
+                pageJob.notificationJob = new Job();
+                pageJob.notificationJob.setJobName(jobTitle);
+                pageJob.notificationJob.setCompanyName(companyName);
+                pageJob.notificationJob.setHref(jobLink);
+                pageJob.notificationJob.setSalary(salary);
+                pageJob.notificationJob.setJobArea(location);
+                // Submit this eligible job before reading the next job description.
+                PageJob pj = pageJob;
+                if (shouldStop()) return false;
+                activity("matched", companyName, jobTitle, jobLink, "通过筛选，准备提交投递");
                 Locator applyBtn = card.locator("button.collect-and-apply__btn");
                 if (applyBtn.count() == 0) {
-                    log.info("岗位【{}】未找到立即投递按钮，跳过", pj.jobTitle);
+                    activity("skipped", pj.companyName, pj.jobTitle, pj.notificationJob.getHref(), "未找到立即投递按钮，未投递");
                     continue;
                 }
                 try {
@@ -319,7 +331,6 @@ public class ZhiLian {
                             // 只关闭由当前 page 打开的子窗口，避免误伤
                             if (newPage.opener() == page) {
                                 try { newPage.waitForLoadState(); } catch (Exception ignored) {}
-                                try { PlaywrightUtil.sleep(200); } catch (Exception ignored) {}
                                 try { newPage.close(); } catch (Exception ignored) {}
                             }
                         } catch (Exception ignored) {}
@@ -328,6 +339,7 @@ public class ZhiLian {
 
                     // 仅通过监听器捕捉并关闭由当前页打开的新窗口，避免与 waitForPopup 产生竞态
                     try {
+                        activity("delivering", pj.companyName, pj.jobTitle, pj.notificationJob.getHref(), "正在提交简历");
                         applyBtn.click(); /* 点击投递按钮（关键定位注释：delivery-click-line）*/
                     } finally {
                         // 取消监听，避免影响后续流程
@@ -347,12 +359,22 @@ public class ZhiLian {
                     }
                 } catch (Exception clickEx) {
                     log.warn("投递失败，继续下一个岗位: {}", clickEx.getMessage());
+                    activity("skipped", pj.companyName, pj.jobTitle, pj.notificationJob.getHref(),
+                            "投递操作异常：" + clickEx.getClass().getSimpleName());
+                    notifyDelivery(DeliveryNotification.of(Platform.ZHILIAN, pj.notificationJob,
+                            DeliveryNotification.Status.UNCONFIRMED, "投递操作异常，请到平台核实（" + clickEx.getClass().getSimpleName() + "）"));
+                    continue;
                 }
 
                 if (checkIsLimit()) {
+                    notifyDelivery(DeliveryNotification.of(Platform.ZHILIAN, pj.notificationJob,
+                            DeliveryNotification.Status.LIMITED, "点击投递后检测到平台上限提示"));
                     sendProgress("用户取消投递或已达上限", null, null);
                     return false;
                 }
+                resultList.add(pj.notificationJob);
+                notifyDelivery(DeliveryNotification.of(Platform.ZHILIAN, pj.notificationJob,
+                        DeliveryNotification.Status.SUBMITTED, "已点击立即投递，当前流程未读取平台逐岗位确认结果"));
             }
 
             return true;
@@ -637,5 +659,30 @@ public class ZhiLian {
      */
     private boolean shouldStop() {
         return shouldStopCallback != null && shouldStopCallback.get();
+    }
+    @Setter
+    private java.util.function.Consumer<JobProgressMessage> activityCallback;
+
+    private void activity(String type, String company, String title, String link, String detail) {
+        if (activityCallback != null) activityCallback.accept(JobProgressMessage.activity("zhilian", type, company, title, link, detail));
+    }
+
+    private void foundJobs(int count) {
+        if (activityCallback != null) activityCallback.accept(JobProgressMessage.found("zhilian", count));
+    }
+
+    @Setter
+    private java.util.function.Consumer<DeliveryNotification> deliveryCallback;
+
+    private void notifyDelivery(DeliveryNotification notification) {
+        if (deliveryCallback != null) deliveryCallback.accept(notification);
+        bot.notifyDelivery(notification);
+    }
+
+    private DeliveryFilterService.DeliveryFilter deliveryFilter() {
+        if (deliveryFilter == null) {
+            deliveryFilter = deliveryFilterService == null ? DeliveryFilterService.empty() : deliveryFilterService.snapshot();
+        }
+        return deliveryFilter;
     }
 }

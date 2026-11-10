@@ -17,7 +17,8 @@ class BossRepeatChatTest {
     @CsvSource({"立即沟通,false,true,false", "立即沟通,true,true,false", "继续沟通,false,false,false", "继续沟通,true,true,false", "立即沟通,,true,false", "继续沟通,,false,false", "已关闭,true,false,false", "继续沟通,true,false,true"})
     void sendsOnlyWhenButtonAndSwitchAllow(String text, Boolean enabled, boolean expected, boolean emptyMessages) throws Exception {
         BossService service = mock(BossService.class);
-        Boss boss = new Boss(service, null, null);
+        var bot = mock(com.getjobs.worker.utils.Bot.class);
+        Boss boss = new Boss(service, null, null, bot);
         BossConfig config = new BossConfig();
         config.setAllowRepeatChat(enabled);
         config.setSayHi("您好，希望进一步沟通。");
@@ -66,6 +67,14 @@ class BossRepeatChatTest {
         verify(button, times(expected ? 1 : 0)).click();
         verify(input, times(expected ? 1 : 0)).fill("继续沟通".equals(text) ? "自定义跟进消息" : config.getSayHi());
         verify(send, times(expected ? 1 : 0)).click();
+        if (expected) {
+            var notification = org.mockito.ArgumentCaptor.forClass(com.getjobs.worker.dto.DeliveryNotification.class);
+            verify(bot).notifyDelivery(notification.capture());
+            assertEquals("https://www.zhipin.com/job_detail/test.html", notification.getValue().link());
+            assertEquals(com.getjobs.worker.dto.DeliveryNotification.Status.SUBMITTED, notification.getValue().status());
+        } else {
+            verifyNoInteractions(bot);
+        }
         verify(detail).close();
     }
 

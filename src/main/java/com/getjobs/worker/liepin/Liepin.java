@@ -1,7 +1,14 @@
 package com.getjobs.worker.liepin;
 
 import com.getjobs.worker.utils.PlaywrightUtil;
+import com.getjobs.worker.utils.Bot;
+import com.getjobs.worker.utils.Job;
+import com.getjobs.worker.utils.Platform;
+import com.getjobs.worker.utils.JobDescriptionReader;
+import com.getjobs.worker.dto.DeliveryNotification;
+import com.getjobs.worker.dto.JobProgressMessage;
 import com.getjobs.application.service.LiepinService;
+import com.getjobs.application.service.DeliveryFilterService;
 import com.getjobs.application.entity.LiepinEntity;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -50,6 +57,11 @@ public class Liepin {
     private Page page;
     @Autowired
     private LiepinService liepinService;
+    @Autowired
+    private Bot bot;
+    @Autowired
+    private DeliveryFilterService deliveryFilterService;
+    private DeliveryFilterService.DeliveryFilter deliveryFilter;
 
     public interface ProgressCallback {
         void onProgress(String message, Integer current, Integer total);
@@ -63,6 +75,7 @@ public class Liepin {
     public void prepare() {
         this.startDate = new Date();
         this.resultList.clear();
+        this.deliveryFilter = deliveryFilterService == null ? DeliveryFilterService.empty() : deliveryFilterService.snapshot();
 
         // 监控猎聘接口请求与返回，输出被拦截的URL（精确匹配PC搜索相关接口）
         if (page != null && !monitoringRegistered) {
@@ -332,6 +345,7 @@ public class Liepin {
         // 获取hr数量
         Locator jobCards = page.locator(JOB_CARDS);
         int count = jobCards.count();
+        foundJobs(count);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < count; i++) {
             if (shouldStop()) {
@@ -352,10 +366,41 @@ public class Liepin {
                 salary = safeText(apiEntity.getJobSalaryText());
                 recruiterName = safeText(apiEntity.getHrName());
             }
+            if (deliveryFilter().hasTitleRules()) {
+                try {
+                    // 筛选必须使用当前卡片的岗位名，不能依赖接口列表的顺序。
+                    jobName = currentJobCard.locator(".job-title, [class*='job-title'], [class*='jobTitle']").first()
+                            .innerText(new Locator.InnerTextOptions().setTimeout(1500));
+                } catch (Exception ignored) {
+                    jobName = null;
+                }
+            }
+            if (deliveryFilter().hasTitleRules() && (jobName == null || jobName.isBlank())) {
+                log.info("被过滤：未获取当前岗位名称，无法应用名称筛选");
+                continue;
+            }
             if (recruiterName == null) recruiterName = "HR";
             if (jobName == null) jobName = "岗位";
             if (companyName == null) companyName = "公司";
             if (salary == null) salary = "";
+
+            DeliveryFilterService.Decision filterDecision = deliveryFilter().evaluateWithContent(jobName,
+                    () -> {
+                        try {
+                            String contentLink = currentJobCard.locator("a[href*='/job/']").first().getAttribute("href");
+                            return JobDescriptionReader.read(page, Platform.LIEPIN, contentLink);
+                        } catch (Exception ignored) {
+                            return "";
+                        }
+                    });
+            if (!filterDecision.accepted()) {
+                activity("filtered", companyName, jobName, null, filterDecision.reason());
+                log.info("被过滤：投递筛选 | 公司：{} | 岗位：{} | 原因：{}", companyName, jobName, filterDecision.reason());
+                continue;
+            }
+            String jobLink = i < lastApiEntities.size() ? lastApiEntities.get(i).getJobLink() : null;
+            activity("matched", companyName, jobName, jobLink, "通过岗位名称与工作内容筛选");
+            if (shouldStop()) return;
             
             try {
                 // 使用JavaScript滚动到卡片位置，更稳定
@@ -513,6 +558,18 @@ public class Liepin {
 
             // 检查按钮文本并点击
             if (button != null && buttonText.contains("聊一聊")) {
+                Job notificationJob = new Job();
+                notificationJob.setCompanyName(companyName);
+                notificationJob.setJobName(jobName);
+                notificationJob.setSalary(salary);
+                if (i < lastApiEntities.size()) {
+                    notificationJob.setHref(jobLink);
+                    notificationJob.setJobArea(lastApiEntities.get(i).getJobArea());
+                }
+                if (notificationJob.getHref() == null && jobIdForUpdate != null) {
+                    notificationJob.setHref("https://www.liepin.com/job/" + jobIdForUpdate + ".shtml");
+                }
+                boolean clicked = false;
                 try {
                     // 在点击按钮前进行鼠标微调，先向右移动2像素，再向左移动2像素
                     try {
@@ -543,7 +600,11 @@ public class Liepin {
                         log.warn("鼠标微调失败，直接点击按钮: {}", moveError.getMessage());
                     }
                     
+                    activity("delivering", companyName, jobName, notificationJob.getHref(), "正在发起沟通");
                     button.click();
+                    clicked = true;
+                    notifyDelivery(DeliveryNotification.of(Platform.LIEPIN, notificationJob,
+                            DeliveryNotification.Status.SUBMITTED, "已点击聊一聊，平台自动打招呼的送达结果未确认"));
                     // PlaywrightUtil.sleep(1); // 等待点击响应
                     
                     // 猎聘会自动发送打招呼语，所以我们只需要关闭聊天窗口
@@ -577,8 +638,15 @@ public class Liepin {
                     
                 } catch (Exception e) {
                     log.error("点击按钮失败: {}", e.getMessage());
+                    if (!clicked) {
+                        notifyDelivery(DeliveryNotification.of(Platform.LIEPIN, notificationJob,
+                                DeliveryNotification.Status.UNCONFIRMED, "发起沟通操作异常，请到平台核实（" + e.getClass().getSimpleName() + "）"));
+                    }
                 }
             } else {
+                activity("skipped", companyName, jobName, jobLink != null ? jobLink : jobIdForUpdate == null ? null
+                        : "https://www.liepin.com/job/" + jobIdForUpdate + ".shtml",
+                        buttonText.contains("继续聊") ? "岗位已有沟通记录，未重复投递" : "未找到聊一聊按钮");
                 // 如果按钮是“继续聊”，视为已投递
                 if (button != null && buttonText.contains("继续聊") && jobIdForUpdate != null) {
                     liepinService.markDelivered(jobIdForUpdate);
@@ -634,5 +702,30 @@ public class Liepin {
             }
         } catch (Exception ignore) {}
         return null;
+    }
+    @Setter
+    private java.util.function.Consumer<JobProgressMessage> activityCallback;
+
+    private void activity(String type, String company, String title, String link, String detail) {
+        if (activityCallback != null) activityCallback.accept(JobProgressMessage.activity("liepin", type, company, title, link, detail));
+    }
+
+    private void foundJobs(int count) {
+        if (activityCallback != null) activityCallback.accept(JobProgressMessage.found("liepin", count));
+    }
+
+    @Setter
+    private java.util.function.Consumer<DeliveryNotification> deliveryCallback;
+
+    private void notifyDelivery(DeliveryNotification notification) {
+        if (deliveryCallback != null) deliveryCallback.accept(notification);
+        bot.notifyDelivery(notification);
+    }
+
+    private DeliveryFilterService.DeliveryFilter deliveryFilter() {
+        if (deliveryFilter == null) {
+            deliveryFilter = deliveryFilterService == null ? DeliveryFilterService.empty() : deliveryFilterService.snapshot();
+        }
+        return deliveryFilter;
     }
 }

@@ -134,6 +134,11 @@ public class Job51Service {
 
     // ==================== 选项相关 ====================
 
+    /** 按页面链接解析出的岗位 ID 读取快照，不依赖列表顺序匹配公司和岗位。 */
+    public Job51Entity findJobById(Long jobId) {
+        return jobId == null ? null : job51Mapper.selectById(jobId);
+    }
+
     /** 根据类型获取选项列表 */
     public List<Job51OptionEntity> getOptionsByType(String type) {
         QueryWrapper<Job51OptionEntity> wrapper = new QueryWrapper<>();
