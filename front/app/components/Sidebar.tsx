@@ -1,21 +1,37 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { BiEnvelope, BiBriefcase, BiSearch, BiTask, BiUserCircle, BiBrain, BiMoon, BiSun, BiFilter } from 'react-icons/bi'
+import { BiEnvelope, BiBriefcase, BiSearch, BiTask, BiUserCircle, BiBrain, BiMoon, BiSun, BiFilter, BiLogOut } from 'react-icons/bi'
 import { motion } from 'framer-motion'
 import { useTheme } from 'next-themes'
-import { API_BASE } from '@/lib/api'
+import { API_BASE, apiFetch } from '@/lib/api'
 
 export default function Sidebar() {
   const pathname = usePathname()
+  const router = useRouter()
+  const [loggingOut, setLoggingOut] = useState(false)
+  const [logoutError, setLogoutError] = useState('')
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
 
   // 健康检查状态：up / degraded / down / unknown
   const [health, setHealth] = useState<'up' | 'degraded' | 'down' | 'unknown'>('unknown')
   const [checking, setChecking] = useState(false)
+
+  const logout = async () => {
+    setLoggingOut(true)
+    setLogoutError('')
+    try {
+      const response = await apiFetch(`${API_BASE}/api/auth/logout`, { method: 'POST' })
+      if (!response.ok) throw new Error()
+      router.replace('/login')
+    } catch {
+      setLogoutError('退出失败，请重试')
+      setLoggingOut(false)
+    }
+  }
 
   useEffect(() => {
     setMounted(true)
@@ -27,16 +43,16 @@ export default function Sidebar() {
     const check = async () => {
       if (checking) return
       setChecking(true)
-      const baseUrl = process.env.API_BASE_URL || `${API_BASE}`
+      const baseUrl = API_BASE
 
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 3000)
       try {
         // 先尝试自定义健康接口
-        let res = await fetch(`${baseUrl}/api/health`, { signal: controller.signal })
+        let res = await apiFetch(`${baseUrl}/api/health`, { signal: controller.signal })
         if (res.status === 404) {
           // 回退到 Spring Boot Actuator
-          res = await fetch(`${baseUrl}/actuator/health`, { signal: controller.signal })
+          res = await apiFetch(`${baseUrl}/actuator/health`, { signal: controller.signal })
         }
         if (!res.ok) throw new Error(`status ${res.status}`)
         const data = await res.json()
@@ -234,6 +250,8 @@ export default function Sidebar() {
         className="absolute bottom-0 left-0 right-0 p-4 border-t border-white/10 dark:border-strokedark"
       >
         {/* 版本信息 */}
+        <button type="button" onClick={logout} disabled={loggingOut} className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl bg-white/10 px-3 py-2.5 text-sm text-white transition hover:bg-white/20 disabled:opacity-50"><BiLogOut />{loggingOut ? '正在退出…' : '退出后台登录'}</button>
+        {logoutError && <p role="alert" className="mb-2 text-center text-xs text-red-200">{logoutError}</p>}
         <div className="text-center">
           <p className="text-white/60 dark:text-waterloo text-xs">v1.0.0</p>
         </div>

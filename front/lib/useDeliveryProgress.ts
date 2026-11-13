@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { API_BASE } from '@/lib/api'
+import { API_BASE, apiFetch } from '@/lib/api'
 import { createSSEWithBackoff } from '@/lib/sse'
 
 export interface DeliveryEvent {
@@ -62,7 +62,7 @@ export function useDeliveryProgress(platform: 'boss' | 'liepin' | '51job' | 'zhi
     requests.current.add(controller)
     const timer = window.setTimeout(() => controller.abort(), 10000)
     try {
-      const response = await fetch(`${API_BASE}${path}`, { method, cache: 'no-store', signal: controller.signal })
+      const response = await apiFetch(`${API_BASE}${path}`, { method, cache: 'no-store', signal: controller.signal })
       const data = await response.json()
       if (!response.ok || data.success === false) throw new Error(data.message || `请求失败（${response.status}）`)
       return data

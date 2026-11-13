@@ -51,7 +51,7 @@ export function createSSEWithBackoff(url: string, options: SSEBackoffOptions): S
   const connect = () => {
     if (closed) return;
     try {
-      es = new EventSource(url);
+      es = new EventSource(url, { withCredentials: true });
       // 注册事件监听
       options.listeners.forEach((l) => es?.addEventListener(l.name, l.handler));
 

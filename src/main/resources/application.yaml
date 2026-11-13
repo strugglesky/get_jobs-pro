@@ -27,6 +27,14 @@ spring:
 # 服务器配置
 server:
   port: 9529  # 后端 API 固定端口（别用 9679：落在 Windows Hyper-V 保留段 9628-9727 里，绑不上）
+  servlet:
+    session:
+      timeout: 8h
+      tracking-modes: cookie
+      cookie:
+        name: GETJOBS_SESSION
+        http-only: true
+        same-site: strict
 
 # 日志配置
 logging:

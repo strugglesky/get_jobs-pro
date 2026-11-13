@@ -26,8 +26,8 @@ module.exports = {
 
   // API 配置（如果需要在构建时使用）
   api: {
-    // 后端 API 地址，需与 application.yaml 的 server.port 一致
-    baseUrl: 'http://localhost:9529',
+    // 生产默认同源；开发默认当前主机 9529，可用 NEXT_PUBLIC_API_BASE 覆盖
+    baseUrl: '',
   },
 
   // 其他自定义配置

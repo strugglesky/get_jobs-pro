@@ -53,7 +53,7 @@ type PagedResult = {
   size: number
 }
 
-import { API_BASE } from "@/lib/api"
+import { API_BASE, apiFetch } from "@/lib/api"
 
 const CATEGORY_COLORS = [
   "#3b82f6",
@@ -258,7 +258,7 @@ export default function AnalysisContent({ showHeader = false }: { showHeader?: b
       if (keyword) params.set("keyword", keyword)
       params.set("page", String(toPage))
       params.set("size", String(toSize))
-      const res = await fetch(`${API_BASE}/api/zhilian/list?${params.toString()}`)
+      const res = await apiFetch(`${API_BASE}/api/zhilian/list?${params.toString()}`)
       const data: PagedResult = await res.json()
       setItems(data.items || [])
       setTotal(data.total || 0)
@@ -280,7 +280,7 @@ export default function AnalysisContent({ showHeader = false }: { showHeader?: b
       if (minK) params.set("minK", String(Number(minK)))
       if (maxK) params.set("maxK", String(Number(maxK)))
       if (keyword) params.set("keyword", keyword)
-      const res = await fetch(`${API_BASE}/api/zhilian/stats?${params.toString()}`)
+      const res = await apiFetch(`${API_BASE}/api/zhilian/stats?${params.toString()}`)
       const data: StatsResponse = await res.json()
       setStats(data)
     } catch (e) {
@@ -321,7 +321,7 @@ export default function AnalysisContent({ showHeader = false }: { showHeader?: b
         const params = new URLSearchParams(baseParams)
         params.set("page", String(currentPage))
         params.set("size", String(pageSize))
-        const res = await fetch(`${API_BASE}/api/zhilian/list?${params.toString()}`)
+        const res = await apiFetch(`${API_BASE}/api/zhilian/list?${params.toString()}`)
         const data: PagedResult = await res.json()
         const chunk = data.items || []
         if (currentPage === 1) totalCount = data.total || chunk.length
@@ -390,7 +390,7 @@ export default function AnalysisContent({ showHeader = false }: { showHeader?: b
         const params = new URLSearchParams(baseParams)
         params.set("page", String(currentPage))
         params.set("size", String(pageSize))
-        const res = await fetch(`${API_BASE}/api/zhilian/list?${params.toString()}`)
+        const res = await apiFetch(`${API_BASE}/api/zhilian/list?${params.toString()}`)
         const data: PagedResult = await res.json()
         const chunk = data.items || []
         if (currentPage === 1) totalCount = data.total || chunk.length

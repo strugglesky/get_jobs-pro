@@ -60,7 +60,7 @@ type PagedResult = {
   size: number
 }
 
-import { API_BASE } from "@/lib/api"
+import { API_BASE, apiFetch } from "@/lib/api"
 const CATEGORY_COLORS = [
   "#3b82f6",
   "#10b981",
@@ -262,7 +262,7 @@ export default function AnalysisContent({ showHeader = false }: { showHeader?: b
 
     try {
       setLoadingList(true)
-      const res = await fetch(`${API_BASE}/api/liepin/list?${params.toString()}`)
+      const res = await apiFetch(`${API_BASE}/api/liepin/list?${params.toString()}`)
       const data: PagedResult = await res.json()
       setItems(data.items || [])
       setTotal(data.total || 0)
@@ -287,7 +287,7 @@ export default function AnalysisContent({ showHeader = false }: { showHeader?: b
 
     try {
       setLoadingStats(true)
-      const res = await fetch(`${API_BASE}/api/liepin/stats?${params.toString()}`)
+      const res = await apiFetch(`${API_BASE}/api/liepin/stats?${params.toString()}`)
       const data: StatsResponse = await res.json()
       setStats(data)
     } catch (e) {
@@ -320,7 +320,7 @@ export default function AnalysisContent({ showHeader = false }: { showHeader?: b
         const params = new URLSearchParams(baseParams)
         params.set("page", String(currentPage))
         params.set("size", String(pageSize))
-        const res = await fetch(`${API_BASE}/api/liepin/list?${params.toString()}`)
+        const res = await apiFetch(`${API_BASE}/api/liepin/list?${params.toString()}`)
         const data: PagedResult = await res.json()
         const chunk = data.items || []
         if (currentPage === 1) totalCount = data.total || chunk.length
@@ -392,7 +392,7 @@ export default function AnalysisContent({ showHeader = false }: { showHeader?: b
         const params = new URLSearchParams(baseParams)
         params.set("page", String(currentPage))
         params.set("size", String(pageSize))
-        const res = await fetch(`${API_BASE}/api/liepin/list?${params.toString()}`)
+        const res = await apiFetch(`${API_BASE}/api/liepin/list?${params.toString()}`)
         const data: PagedResult = await res.json()
         const chunk = data.items || []
         if (currentPage === 1) totalCount = data.total || chunk.length

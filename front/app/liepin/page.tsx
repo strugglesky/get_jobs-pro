@@ -13,7 +13,7 @@ import AnalysisContent from '@/app/liepin/analysis/AnalysisContent'
 import PageHeader from '@/app/components/PageHeader'
 import DeliveryProgressPanel, { DeliveryTaskButton } from '@/app/components/DeliveryProgressPanel'
 import { useDeliveryProgress } from '@/lib/useDeliveryProgress'
-import { API_BASE } from '@/lib/api'
+import { API_BASE, apiFetch } from '@/lib/api'
 
 interface LiepinConfig {
   id?: number
@@ -137,7 +137,7 @@ export default function LiepinPage() {
 
   const fetchAllData = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/liepin/config`)
+      const response = await apiFetch(`${API_BASE}/api/liepin/config`)
       const data = await response.json()
 
       console.log('Fetched liepin data:', data)
@@ -165,7 +165,7 @@ export default function LiepinPage() {
   const handleSave = async () => {
     try {
       const payload = { ...config, keywords: serializeKeywordsForDb(config.keywords) }
-      const response = await fetch(`${API_BASE}/api/liepin/config`, {
+      const response = await apiFetch(`${API_BASE}/api/liepin/config`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -176,7 +176,7 @@ export default function LiepinPage() {
       if (response.ok) {
         // 统一保存 Cookie（Liepin）
         try {
-          await fetch(`${API_BASE}/api/cookie/save?platform=liepin`, { method: 'POST' })
+          await apiFetch(`${API_BASE}/api/cookie/save?platform=liepin`, { method: 'POST' })
         } catch (e) {
           console.warn('保存 Cookie 失败（Liepin）:', e)
         }
@@ -200,7 +200,7 @@ export default function LiepinPage() {
 
   const triggerLogout = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/liepin/logout`, { method: 'POST' })
+      const response = await apiFetch(`${API_BASE}/api/liepin/logout`, { method: 'POST' })
       const data = await response.json()
       if (data.success) {
         setIsLoggedIn(false)

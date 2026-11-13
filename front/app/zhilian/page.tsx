@@ -13,7 +13,7 @@ import AnalysisContent from '@/app/zhilian/analysis/AnalysisContent'
 import PageHeader from '@/app/components/PageHeader'
 import DeliveryProgressPanel, { DeliveryTaskButton } from '@/app/components/DeliveryProgressPanel'
 import { useDeliveryProgress } from '@/lib/useDeliveryProgress'
-import { API_BASE } from '@/lib/api'
+import { API_BASE, apiFetch } from '@/lib/api'
 
 interface ZhilianConfig {
   id?: number
@@ -119,7 +119,7 @@ export default function ZhilianPage() {
 
   const fetchAllData = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/zhilian/config`)
+      const res = await apiFetch(`${API_BASE}/api/zhilian/config`)
       const data = await res.json()
       if (data.config) {
         const normalized = { ...data.config }
@@ -140,7 +140,7 @@ export default function ZhilianPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/zhilian/config`, { method: 'GET' })
+        const res = await apiFetch(`${API_BASE}/api/zhilian/config`, { method: 'GET' })
         const ok = !!res && res.ok
         setBackendAvailable(ok)
         if (ok) {
@@ -160,7 +160,7 @@ export default function ZhilianPage() {
 
   const triggerLogout = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/zhilian/logout`, { method: 'POST' })
+      const response = await apiFetch(`${API_BASE}/api/zhilian/logout`, { method: 'POST' })
       const data = await response.json()
       setIsLoggedIn(false)
       setLogoutResult({ success: data.success, message: data.success ? '已退出登录，Cookie已清空。' : data.message })
@@ -173,7 +173,7 @@ export default function ZhilianPage() {
 
   const handleSaveCookie = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/cookie/save?platform=zhilian`, { method: 'POST' })
+      const response = await apiFetch(`${API_BASE}/api/cookie/save?platform=zhilian`, { method: 'POST' })
       const data = await response.json()
       setSaveResult({ success: data.success, message: data.success ? '配置保存成功。' : data.message })
       setShowSaveDialog(true)
@@ -186,13 +186,13 @@ export default function ZhilianPage() {
   const handleSaveConfig = async () => {
     try {
       const payload = { ...config, keywords: serializeKeywordsForDb(config.keywords) }
-      const response = await fetch(`${API_BASE}/api/zhilian/config`, {
+      const response = await apiFetch(`${API_BASE}/api/zhilian/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
       if (response.ok) {
-        try { await fetch(`${API_BASE}/api/cookie/save?platform=zhilian`, { method: 'POST' }) } catch {}
+        try { await apiFetch(`${API_BASE}/api/cookie/save?platform=zhilian`, { method: 'POST' }) } catch {}
         await fetchAllData()
         setSaveResult({ success: true, message: '保存成功，配置已更新。' })
       } else {

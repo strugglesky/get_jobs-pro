@@ -64,7 +64,7 @@ type PagedResult = {
   size: number
 }
 
-import { API_BASE } from "@/lib/api"
+import { API_BASE, apiFetch } from "@/lib/api"
 // 通用分类颜色（用于柱状/饼状图每个分类不同颜色）
 const CATEGORY_COLORS = [
   "#3b82f6",
@@ -335,7 +335,7 @@ export default function AnalysisContent({ showHeader = false }: { showHeader?: b
 
     try {
       setLoadingList(true)
-      const res = await fetch(`${API_BASE}/api/boss/list?${params.toString()}`)
+      const res = await apiFetch(`${API_BASE}/api/boss/list?${params.toString()}`)
       const data: PagedResult = await res.json()
       // 前端兜底过滤猎头（避免后端未更新导致的显示异常）
       const filteredItems = (data.items || []).filter(it => {
@@ -368,7 +368,7 @@ export default function AnalysisContent({ showHeader = false }: { showHeader?: b
 
     try {
       setLoadingStats(true)
-      const res = await fetch(`${API_BASE}/api/boss/stats?${params.toString()}`)
+      const res = await apiFetch(`${API_BASE}/api/boss/stats?${params.toString()}`)
       const data: StatsResponse = await res.json()
       setStats(data)
     } catch (e) {
@@ -386,7 +386,7 @@ export default function AnalysisContent({ showHeader = false }: { showHeader?: b
   const onReload = async () => {
     try {
       setReloading(true)
-      const res = await fetch(`${API_BASE}/api/boss/reload`)
+      const res = await apiFetch(`${API_BASE}/api/boss/reload`)
       const data = await res.json()
       console.log("reload", data)
       await loadList(1, size)
@@ -422,7 +422,7 @@ export default function AnalysisContent({ showHeader = false }: { showHeader?: b
         const params = new URLSearchParams(baseParams)
         params.set("page", String(currentPage))
         params.set("size", String(pageSize))
-        const res = await fetch(`${API_BASE}/api/boss/list?${params.toString()}`)
+        const res = await apiFetch(`${API_BASE}/api/boss/list?${params.toString()}`)
         const data: PagedResult = await res.json()
         let chunk = data.items || []
         // 导出也做兜底过滤，确保CSV不含猎头岗位

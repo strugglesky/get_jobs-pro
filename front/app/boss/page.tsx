@@ -15,7 +15,7 @@ import PageHeader from '@/app/components/PageHeader'
 import DeliveryProgressPanel, { DeliveryTaskButton } from '@/app/components/DeliveryProgressPanel'
 import { useDeliveryProgress } from '@/lib/useDeliveryProgress'
 import AnalysisContent from '@/app/boss/analysis/AnalysisContent'
-import { API_BASE } from '@/lib/api'
+import { API_BASE, apiFetch } from '@/lib/api'
 
 interface BossConfig {
   id?: number
@@ -206,7 +206,7 @@ export default function BossPage() {
 
   const fetchAllData = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/boss/config`)
+      const response = await apiFetch(`${API_BASE}/api/boss/config`)
       const data = await response.json()
 
       console.log('Fetched data:', data)
@@ -436,7 +436,7 @@ export default function BossPage() {
         stage: toBracketList(selectedStage),
         salary: toBracketList(selectedSalary),
       }
-      const response = await fetch(`${API_BASE}/api/boss/config`, {
+      const response = await apiFetch(`${API_BASE}/api/boss/config`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -447,7 +447,7 @@ export default function BossPage() {
       if (response.ok) {
         // 统一保存 Cookie（Boss）
         try {
-          await fetch(`${API_BASE}/api/cookie/save?platform=boss`, { method: 'POST' })
+          await apiFetch(`${API_BASE}/api/cookie/save?platform=boss`, { method: 'POST' })
         } catch (e) {
           console.warn('保存 Cookie 失败（Boss）:', e)
         }
@@ -497,7 +497,7 @@ export default function BossPage() {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const response = await fetch(`${API_BASE}/api/boss/config/resume-image`, {
+      const response = await apiFetch(`${API_BASE}/api/boss/config/resume-image`, {
         method: 'POST',
         body: formData,
       })
@@ -540,7 +540,7 @@ export default function BossPage() {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/boss/config/blacklist`, {
+      const response = await apiFetch(`${API_BASE}/api/boss/config/blacklist`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -566,7 +566,7 @@ export default function BossPage() {
 
   const handleDeleteBlacklist = async (id: number) => {
     try {
-      const response = await fetch(`${API_BASE}/api/boss/config/blacklist/${id}`, {
+      const response = await apiFetch(`${API_BASE}/api/boss/config/blacklist/${id}`, {
         method: 'DELETE',
       })
 
@@ -586,7 +586,7 @@ export default function BossPage() {
 
   const triggerLogout = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/boss/logout`, { method: 'POST' })
+      const response = await apiFetch(`${API_BASE}/api/boss/logout`, { method: 'POST' })
       const data = await response.json()
       if (data.success) {
         setIsLoggedIn(false)

@@ -13,7 +13,7 @@ import DeliveryProgressPanel, { DeliveryTaskButton } from '@/app/components/Deli
 import { useDeliveryProgress } from '@/lib/useDeliveryProgress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import AnalysisContent from '@/app/51job/analysis/AnalysisContent'
-import { API_BASE } from '@/lib/api'
+import { API_BASE, apiFetch } from '@/lib/api'
 
 interface Job51Config {
   id?: number
@@ -29,7 +29,7 @@ interface Job51Options { jobArea: Job51Option[]; salary: Job51Option[] }
 const MAX_SALARY_SELECTIONS = 5
 
 export default function Job51Page() {
-  const API = process.env.API_BASE_URL || `${API_BASE}`
+  const API = API_BASE
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const deliveryTask = useDeliveryProgress('51job')
   const [checkingLogin, setCheckingLogin] = useState(true)
@@ -82,7 +82,7 @@ export default function Job51Page() {
               const data = JSON.parse(event.data)
               setIsLoggedIn(data.job51LoggedIn || false)
               if (data.job51LoggedIn && !cookieSavedAfterLogin) {
-                fetch(`${API}/api/cookie/save?platform=51job`, { method: 'POST' }).catch(() => {})
+                apiFetch(`${API}/api/cookie/save?platform=51job`, { method: 'POST' }).catch(() => {})
                 setCookieSavedAfterLogin(true)
               }
               setCheckingLogin(false)
@@ -99,7 +99,7 @@ export default function Job51Page() {
               if (data.platform === '51job') {
                 setIsLoggedIn(data.isLoggedIn)
                 if (data.isLoggedIn && !cookieSavedAfterLogin) {
-                  fetch(`${API}/api/cookie/save?platform=51job`, { method: 'POST' }).catch(() => {})
+                  apiFetch(`${API}/api/cookie/save?platform=51job`, { method: 'POST' }).catch(() => {})
                   setCookieSavedAfterLogin(true)
                 }
                 setCheckingLogin(false)
@@ -208,7 +208,7 @@ export default function Job51Page() {
 
   const fetchAllData = async () => {
     try {
-      const res = await fetch(`${API}/api/51job/config`)
+      const res = await apiFetch(`${API}/api/51job/config`)
       if (!res.ok) {
         console.warn(`[51job] 获取配置失败: ${res.status}`)
         setConfig({ keywords: '', jobArea: '', salary: '' })
@@ -259,7 +259,7 @@ export default function Job51Page() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`${API}/api/51job/config`, { method: 'GET' })
+        const res = await apiFetch(`${API}/api/51job/config`, { method: 'GET' })
         const ok = !!res && res.ok
         setBackendAvailable(ok)
         if (ok) {
@@ -278,7 +278,7 @@ export default function Job51Page() {
 
   const triggerLogout = async () => {
     try {
-      const response = await fetch(`${API}/api/51job/logout`, { method: 'POST' })
+      const response = await apiFetch(`${API}/api/51job/logout`, { method: 'POST' })
       const data = await response.json()
       setIsLoggedIn(false)
       setLogoutResult({ success: data.success, message: data.success ? '已退出登录，Cookie已清空。' : data.message })
@@ -291,7 +291,7 @@ export default function Job51Page() {
 
   const handleSaveCookie = async () => {
     try {
-      const response = await fetch(`${API}/api/cookie/save?platform=51job`, { method: 'POST' })
+      const response = await apiFetch(`${API}/api/cookie/save?platform=51job`, { method: 'POST' })
       const data = await response.json()
       setSaveResult({ success: data.success, message: data.success ? '配置保存成功。' : data.message })
       setShowSaveDialog(true)
@@ -331,7 +331,7 @@ export default function Job51Page() {
         jobArea: toBracketListString(config.jobArea, 'jobArea'),
         salary: toBracketListString(config.salary, 'salary'),
       }
-      const response = await fetch(`${API}/api/51job/config`, {
+      const response = await apiFetch(`${API}/api/51job/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -339,7 +339,7 @@ export default function Job51Page() {
       if (response.ok) {
         // 保存配置成功后，同步保存 Cookie（按你的要求加到保存按钮）
         try {
-          await fetch(`${API}/api/cookie/save?platform=51job`, { method: 'POST' })
+          await apiFetch(`${API}/api/cookie/save?platform=51job`, { method: 'POST' })
         } catch (e) {
           console.warn('[51job] 保存 Cookie 失败:', e)
         }

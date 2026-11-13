@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { API_BASE } from '@/lib/api'
+import { API_BASE, apiFetch } from '@/lib/api'
 
 type Filters = {
   titleIncludes: string
@@ -40,7 +40,7 @@ export default function DeliveryFilterPage() {
 
   useEffect(() => {
     let active = true
-    fetch(`${API_BASE}/api/delivery-filter`)
+    apiFetch(`${API_BASE}/api/delivery-filter`)
       .then(async response => {
         if (!response.ok) throw new Error('读取筛选配置失败')
         return response.json()
@@ -61,7 +61,7 @@ export default function DeliveryFilterPage() {
     setSaving(true)
     setResult(null)
     try {
-      const response = await fetch(`${API_BASE}/api/delivery-filter`, {
+      const response = await apiFetch(`${API_BASE}/api/delivery-filter`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(filters),

@@ -1,9 +1,7 @@
 "use client";
 
-import type { Metadata } from "next";
 import "./globals.css";
-import Sidebar from "./components/Sidebar";
-import ContentArea from "./components/ContentArea";
+import AuthGate from "./components/AuthGate";
 import { ThemeProvider } from "next-themes";
 
 export default function RootLayout({
@@ -28,12 +26,7 @@ export default function RootLayout({
           defaultTheme="light"
           enableSystem={false}
         >
-          <div className="flex min-h-screen">
-            <Sidebar />
-            <ContentArea>
-              {children}
-            </ContentArea>
-          </div>
+          <AuthGate>{children}</AuthGate>
         </ThemeProvider>
       </body>
     </html>
